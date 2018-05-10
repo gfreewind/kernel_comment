@@ -1,0 +1,31 @@
+#
+# Feature name:          lockdep
+#         Kconfig:       LOCKDEP_SUPPORT
+#         description:   arch supports the runtime locking correctness debug facility
+#
+    -----------------------
+    |         arch |status|
+    -----------------------
+    |       alpha: | TODO |
+    |         arc: |  ok  |
+    |         arm: |  ok  |
+    |       arm64: |  ok  |
+    |         c6x: | TODO |
+    |       h8300: | TODO |
+    |     hexagon: |  ok  |
+    |        ia64: | TODO |
+    |        m68k: | TODO |
+    |  microblaze: |  ok  |
+    |        mips: |  ok  |
+    |       nios2: | TODO |
+    |    openrisc: | TODO |
+    |      parisc: | TODO |
+    |     powerpc: |  ok  |
+    |        s390: |  ok  |
+    |          sh: |  ok  |
+    |       sparc: |  ok  |
+    |          um: |  ok  |
+    |   unicore32: |  ok  |
+    |         x86: |  ok  |
+    |      xtensa: |  ok  |
+    -----------------------
