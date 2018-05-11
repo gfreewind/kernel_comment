@@ -2807,23 +2807,35 @@ extern int netdev_flow_limit_table_len;
 /*
  * Incoming packets are placed on per-CPU queues
  */
+/*
+内核收包的关键结构，会创建per cpu变量
+*/
 struct softnet_data {
-	struct list_head	poll_list;
-	struct sk_buff_head	process_queue;
+	struct list_head	poll_list; // 用于挂载NAPI的节点
+	struct sk_buff_head	process_queue; //待处理的skb
 
 	/* stats */
+	/*
+	被处理的skb数量，注意并不是接收到的数量。因为当开启RPS后，cpu接收到的skb有可能会被发到另外一个核心处理。
+	所以这里的processed只是被本核心真正处理的skb。
+	*/
 	unsigned int		processed;
+	/*
+	在net_rx_action处理skb时，因为达到netdev_budget和netdev_budget_usecs的限制后，而退出处理的次数。
+	其中netdev_budget由/proc/sys/net/core/netdev_budget配置，默认是300。
+	netdev_budget_usecs由/proc/sys/net/core/netdev_budget_usecs配置，单位us。
+	*/
 	unsigned int		time_squeeze;
-	unsigned int		received_rps;
+	unsigned int		received_rps; // 因为开启RPS，由其他核心IPI本核心PRS的次数。
 #ifdef CONFIG_RPS
-	struct softnet_data	*rps_ipi_list;
+	struct softnet_data	*rps_ipi_list; // 本核心要给其他核心发送IPI的链表
 #endif
 #ifdef CONFIG_NET_FLOW_LIMIT
-	struct sd_flow_limit __rcu *flow_limit;
+	struct sd_flow_limit __rcu *flow_limit; //对一个flow的数据包进行限制，减低恶意攻击。
 #endif
-	struct Qdisc		*output_queue;
-	struct Qdisc		**output_queue_tailp;
-	struct sk_buff		*completion_queue;
+	struct Qdisc		*output_queue; // 需要重新调度的第一个发送Qdisc节点，由发送软中断处理函数net_tx_action调度
+	struct Qdisc		**output_queue_tailp; // 需要重新调度的最后一个发送Qdisc节点，由发送软中断处理函数net_tx_action调度
+	struct sk_buff		*completion_queue; // 已经完成发送的skb队列，在发送软中断处理函数net_tx_action中调用
 #ifdef CONFIG_XFRM_OFFLOAD
 	struct sk_buff_head	xfrm_backlog;
 #endif
@@ -2831,16 +2843,28 @@ struct softnet_data {
 	/* input_queue_head should be written by cpu owning this struct,
 	 * and only read by other cpus. Worth using a cache line.
 	 */
-	unsigned int		input_queue_head ____cacheline_aligned_in_smp;
+	unsigned int		input_queue_head ____cacheline_aligned_in_smp; // 表示该CPU已经处理的skb的个数，用于RFS保证包是按照接收顺序处理的
 
 	/* Elements below can be accessed between CPUs for RPS/RFS */
-	call_single_data_t	csd ____cacheline_aligned_in_smp;
-	struct softnet_data	*rps_ipi_next;
-	unsigned int		cpu;
-	unsigned int		input_queue_tail;
+	call_single_data_t	csd ____cacheline_aligned_in_smp; // 用于RPS/RFS的IPI通知
+	struct softnet_data	*rps_ipi_next; //用于添加IPI节点和发送IPI使用
+	unsigned int		cpu; //softnet_data归属于哪个cpu，用于发送IPI
+	unsigned int		input_queue_tail;//表示该CPU被其它核心通过RPS插入的skb个数，用于保证RFS的skb有序处理
 #endif
-	unsigned int		dropped;
+	unsigned int		dropped;//因为队列达到netdev_max_backlog或flow limit的限制，而丢掉的skb个数
+	/*
+	接收队列。
+	1. 开启RPS后，由其核心插入;
+	2. 对于不支持NAPI的旧网卡驱动，调用netif_rx，也会插入这个队列;
+	3. 由netif_rx_ni或dev_forward_skb，插入这个队列；这两个函数一般用于虚拟设备或者内部的skb发送；
+	*/
 	struct sk_buff_head	input_pkt_queue;
+	/*
+	伪NAPI设备节点
+	1. 启用RPS，本核心收到IPI中断后，利用NAPI调度backlog
+	2. 未启用RPS，其它核心如果像本核心追加了skb，也可以使用NAPI调度backlog
+	backlog的poll回调是process_backlog，其会处理process_queue和input_pkt_queue中的skb
+	*/
 	struct napi_struct	backlog;
 
 };
