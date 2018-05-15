@@ -3657,7 +3657,7 @@ EXPORT_SYMBOL(rps_sock_flow_table);
 u32 rps_cpu_mask __read_mostly;
 EXPORT_SYMBOL(rps_cpu_mask);
 
-struct static_key rps_needed __read_mostly;
+struct static_key rps_needed __read_mostly; //是否配置了RPS
 EXPORT_SYMBOL(rps_needed);
 struct static_key rfs_needed __read_mostly;
 EXPORT_SYMBOL(rfs_needed);
@@ -3723,7 +3723,9 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 	u32 tcpu;
 	u32 hash;
 
+	/* 查看skb是否被设置接收队列信息，一般是由网卡驱动调用skb_record_rx_queue设置 */
 	if (skb_rx_queue_recorded(skb)) {
+		/* 得到网卡接收队列索引 */
 		u16 index = skb_get_rx_queue(skb);
 
 		if (unlikely(index >= dev->real_num_rx_queues)) {
@@ -3733,17 +3735,20 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 				  dev->name, index, dev->real_num_rx_queues);
 			goto done;
 		}
+		/* 切换到正确的接收队列 */
 		rxqueue += index;
 	}
 
 	/* Avoid computing hash if RFS/RPS is not active for this rxqueue */
-
+	/* 得到该接收队列的RFS表和RPS设置 */
 	flow_table = rcu_dereference(rxqueue->rps_flow_table);
 	map = rcu_dereference(rxqueue->rps_map);
+	/* 该队列没有设置RFS和RPS */
 	if (!flow_table && !map)
 		goto done;
 
 	skb_reset_network_header(skb);
+	/* 根据skb的实际协议，计算出hash值。某些网卡支持硬件rxhash */
 	hash = skb_get_hash(skb);
 	if (!hash)
 		goto done;
@@ -3794,9 +3799,11 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 	}
 
 try_rps:
-
+	/* 找到了RPS/RFS的映射关系 */
 	if (map) {
+		/* 根据hash值以及RPS/RFS的映射关系，得到目的cpu */
 		tcpu = map->cpus[reciprocal_scale(hash, map->len)];
+		/* 目的CPU在线，则确定使用该CPU */
 		if (cpu_online(tcpu)) {
 			cpu = tcpu;
 			goto done;
@@ -3848,10 +3855,12 @@ EXPORT_SYMBOL(rps_may_expire_flow);
 #endif /* CONFIG_RFS_ACCEL */
 
 /* Called from hardirq (IPI) context */
+/* RPS的IPI的处理函数 */
 static void rps_trigger_softirq(void *data)
 {
 	struct softnet_data *sd = data;
 
+	/* 有其他核心向本核心插入了skb，因此调度backlog */
 	____napi_schedule(sd, &sd->backlog);
 	sd->received_rps++;
 }
@@ -3869,9 +3878,10 @@ static int rps_ipi_queued(struct softnet_data *sd)
 	struct softnet_data *mysd = this_cpu_ptr(&softnet_data);
 
 	if (sd != mysd) {
+		/* 目的CPU不是当前CPU，则将其加入到当前CPU的IPI链表中 */
 		sd->rps_ipi_next = mysd->rps_ipi_list;
 		mysd->rps_ipi_list = sd;
-
+		/* 触发当前CPU的软中断，保证后面可以处理IPI */
 		__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 		return 1;
 	}
@@ -3934,14 +3944,23 @@ static int enqueue_to_backlog(struct sk_buff *skb, int cpu,
 
 	local_irq_save(flags);
 
+	/* 多核之间，会互相插入skb，所以需要lock保护。 */
 	rps_lock(sd);
 	if (!netif_running(skb->dev))
 		goto drop;
+	/* 获得目标CPU接收队列的长度 */
 	qlen = skb_queue_len(&sd->input_pkt_queue);
+	/* 判断接收队列长度是否超过了指定限制，或者该flow是否超过了指定限制 */
 	if (qlen <= netdev_max_backlog && !skb_flow_limit(skb, qlen)) {
+		/*
+		当队列长度不为0时，表示之前已经有CPU插入了skb，并且会进行IPI调用。
+		因此，直接插入队列即可。
+		*/
 		if (qlen) {
 enqueue:
+			/* 插入接收队列的尾部 */
 			__skb_queue_tail(&sd->input_pkt_queue, skb);
+			/* 递增接收队列的计数，以及更新该flow的计数 */
 			input_queue_tail_incr_save(sd, qtail);
 			rps_unlock(sd);
 			local_irq_restore(flags);
@@ -3951,13 +3970,20 @@ enqueue:
 		/* Schedule NAPI for backlog device
 		 * We can use non atomic operation since we own the queue lock
 		 */
+		/* 检测目标CPU的backlog是否已经被调度 */
 		if (!__test_and_set_bit(NAPI_STATE_SCHED, &sd->backlog.state)) {
+			/*
+			将目标CPU添加到本CPU的IPI RPS通知队列中。
+			目标CPU与当前CPU相同，则返回false。直接调度即可，没必要使用IPI
+			目标CPU与当前CPU不同，则返回true，成功加入到本CPU的IPI列表中。
+			*/
 			if (!rps_ipi_queued(sd))
-				____napi_schedule(sd, &sd->backlog);
+				____napi_schedule(sd, &sd->backlog); // 目标CPU就是当前CPU，直接调度backlog即可
 		}
-		goto enqueue;
+		goto enqueue; //将skb加入目标CPU的接收队列
 	}
 
+	/* 超过队列限制，丢弃当前数据包 */
 drop:
 	sd->dropped++;
 	rps_unlock(sd);
@@ -4158,6 +4184,7 @@ static int netif_rx_internal(struct sk_buff *skb)
 	}
 
 #ifdef CONFIG_RPS
+	/* 配置了RPS */
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;
 		int cpu;
@@ -4166,10 +4193,10 @@ static int netif_rx_internal(struct sk_buff *skb)
 		rcu_read_lock();
 
 		cpu = get_rps_cpu(skb->dev, skb, &rflow);
-		if (cpu < 0)
-			cpu = smp_processor_id();
+		if (cpu < 0) //根据RPS/RFS，没有找到目的CPU
+			cpu = smp_processor_id(); // 使用当前CPU作为目的CPU，便于后面统一处理
 
-		ret = enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
+		ret = enqueue_to_backlog(skb, cpu, &rflow->last_qtail);//将skb追加到目的CPU的backlog队列中
 
 		rcu_read_unlock();
 		preempt_enable();
@@ -4719,9 +4746,11 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 #ifdef CONFIG_RPS
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;
-		int cpu = get_rps_cpu(skb->dev, skb, &rflow);
+		int cpu = get_rps_cpu(skb->dev, skb, &rflow);// 进行RPS或RFS
 
+		/* 当RPS/RFS得到了目的CPU（不为-1）*/
 		if (cpu >= 0) {
+			/* 将当前skb加入到目的CPU的backlog队列中 */
 			ret = enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
 			rcu_read_unlock();
 			return ret;
@@ -5277,6 +5306,7 @@ static void net_rps_send_ipi(struct softnet_data *remsd)
 	while (remsd) {
 		struct softnet_data *next = remsd->rps_ipi_next;
 
+		/* 目标CPU是在线的，则向目标CPU进行IPI调用 */
 		if (cpu_online(remsd->cpu))
 			smp_call_function_single_async(remsd->cpu, &remsd->csd);
 		remsd = next;
@@ -5314,6 +5344,9 @@ static bool sd_has_rps_ipi_waiting(struct softnet_data *sd)
 #endif
 }
 
+/*
+backlog伪节点的poll处理函数
+*/
 static int process_backlog(struct napi_struct *napi, int quota)
 {
 	struct softnet_data *sd = container_of(napi, struct softnet_data, backlog);
@@ -5323,8 +5356,10 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	/* Check if we have pending ipi, its better to send them now,
 	 * not waiting net_rx_action() end.
 	 */
+	/* 有待发送的IPI数据 */
 	if (sd_has_rps_ipi_waiting(sd)) {
 		local_irq_disable();
+		/* 向链表中所有目的CPU节点进行IPI调用 */
 		net_rps_action_and_irq_enable(sd);
 	}
 
@@ -5332,17 +5367,20 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	while (again) {
 		struct sk_buff *skb;
 
+		/* 处理所有待处理的数据包，这个process_queue只有本CPU才会访问，所以无需用锁 */
 		while ((skb = __skb_dequeue(&sd->process_queue))) {
 			rcu_read_lock();
 			__netif_receive_skb(skb);
 			rcu_read_unlock();
+			/* 增加当前CPU接收队列的处理计数 */
 			input_queue_head_incr(sd);
-			if (++work >= quota)
+			if (++work >= quota) // 已经处理的数据包，超过了quota值，则返回结果退出。
 				return work;
 
 		}
 
 		local_irq_disable();
+		/* input_pkt_queue会被其他核心访问，需要使用rps_lock保护 */
 		rps_lock(sd);
 		if (skb_queue_empty(&sd->input_pkt_queue)) {
 			/*
@@ -5353,9 +5391,11 @@ static int process_backlog(struct napi_struct *napi, int quota)
 			 * We can use a plain write instead of clear_bit(),
 			 * and we dont need an smp_mb() memory barrier.
 			 */
+			/* 接收队列已空，backlog无需调度，因此重置state */
 			napi->state = 0;
 			again = false;
 		} else {
+			/* 将接收队列的skb，追加到待处理队列中，继续处理 */
 			skb_queue_splice_tail_init(&sd->input_pkt_queue,
 						   &sd->process_queue);
 		}
@@ -9061,6 +9101,7 @@ static int __init net_dev_init(void)
 		INIT_LIST_HEAD(&sd->poll_list);
 		sd->output_queue_tailp = &sd->output_queue;
 #ifdef CONFIG_RPS
+		/* 设置RPS 的IPI处理函数和参数sd */
 		sd->csd.func = rps_trigger_softirq;
 		sd->csd.info = sd;
 		sd->cpu = i;
