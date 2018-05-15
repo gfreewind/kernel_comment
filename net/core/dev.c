@@ -3699,10 +3699,12 @@ set_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 			old_rflow->filter = RPS_NO_FILTER;
 	out:
 #endif
+		/* 设置flow的计数为目的cpu的已处理的计数 */
 		rflow->last_qtail =
 			per_cpu(softnet_data, next_cpu).input_queue_head;
 	}
 
+	/* 设置当前流的目的cpu */
 	rflow->cpu = next_cpu;
 	return rflow;
 }
@@ -3753,6 +3755,7 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 	if (!hash)
 		goto done;
 
+	/* 得到全局RFS表 */
 	sock_flow_table = rcu_dereference(rps_sock_flow_table);
 	if (flow_table && sock_flow_table) {
 		struct rps_dev_flow *rflow;
@@ -3760,15 +3763,18 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 		u32 ident;
 
 		/* First check into global flow table if there is a match */
+		/* 检查全局的RFS表是否有匹配项 */
 		ident = sock_flow_table->ents[hash & sock_flow_table->mask];
-		if ((ident ^ hash) & ~rps_cpu_mask)
+		if ((ident ^ hash) & ~rps_cpu_mask) // 检查hash值是否匹配。匹配为0，不匹配则直接尝试RPS。
 			goto try_rps;
 
+		/* hash匹配了，从全局RFS表得到next_cpu */
 		next_cpu = ident & rps_cpu_mask;
 
 		/* OK, now we know there is a match,
 		 * we can look at the local (per receive queue) flow table
 		 */
+		/* 从接收队列的RFS表中得到tcpu */
 		rflow = &flow_table->flows[hash & flow_table->mask];
 		tcpu = rflow->cpu;
 
@@ -3787,10 +3793,13 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 		    (tcpu >= nr_cpu_ids || !cpu_online(tcpu) ||
 		     ((int)(per_cpu(softnet_data, tcpu).input_queue_head -
 		      rflow->last_qtail)) >= 0)) {
+		    /* 使用全局RFS中记录的CPU */
 			tcpu = next_cpu;
+			/* 设置接收队列的RFS，并返回对应flow */
 			rflow = set_rps_cpu(dev, skb, rflow, next_cpu);
 		}
 
+		/* 目的cpu是合法cpu，即作为结果返回，同时返回对应的flow */
 		if (tcpu < nr_cpu_ids && cpu_online(tcpu)) {
 			*rflowp = rflow;
 			cpu = tcpu;

@@ -692,6 +692,7 @@ static const struct sysfs_ops rx_queue_sysfs_ops = {
 };
 
 #ifdef CONFIG_RPS
+/* 显示RPS当前设置 */
 static ssize_t show_rps_map(struct netdev_rx_queue *queue, char *buf)
 {
 	struct rps_map *map;
@@ -714,6 +715,7 @@ static ssize_t show_rps_map(struct netdev_rx_queue *queue, char *buf)
 	return len < PAGE_SIZE ? len : -EINVAL;
 }
 
+/* 设置RPS的值 */
 static ssize_t store_rps_map(struct netdev_rx_queue *queue,
 			     const char *buf, size_t len)
 {
@@ -771,7 +773,7 @@ static ssize_t store_rps_map(struct netdev_rx_queue *queue,
 	free_cpumask_var(mask);
 	return len;
 }
-
+/* 显示当前RFS的表值 */
 static ssize_t show_rps_dev_flow_table_cnt(struct netdev_rx_queue *queue,
 					   char *buf)
 {
@@ -794,6 +796,7 @@ static void rps_dev_flow_table_release(struct rcu_head *rcu)
 	vfree(table);
 }
 
+/* 设置队列的RFS表 */
 static ssize_t store_rps_dev_flow_table_cnt(struct netdev_rx_queue *queue,
 					    const char *buf, size_t len)
 {
@@ -805,6 +808,7 @@ static ssize_t store_rps_dev_flow_table_cnt(struct netdev_rx_queue *queue,
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
 
+	/* 将字符串转换为无符号整数 */
 	rc = kstrtoul(buf, 0, &count);
 	if (rc < 0)
 		return rc;
@@ -814,12 +818,14 @@ static ssize_t store_rps_dev_flow_table_cnt(struct netdev_rx_queue *queue,
 		/* mask = roundup_pow_of_two(count) - 1;
 		 * without overflows...
 		 */
+		/* 将mask转为2^N-1 */
 		while ((mask | (mask >> 1)) != mask)
 			mask |= (mask >> 1);
 		/* On 64 bit arches, must check mask fits in table->mask (u32),
 		 * and on 32bit arches, must check
 		 * RPS_DEV_FLOW_TABLE_SIZE(mask + 1) doesn't overflow.
 		 */
+		/* 防止溢出检查 */
 #if BITS_PER_LONG > 32
 		if (mask > (unsigned long)(u32)mask)
 			return -EINVAL;
@@ -830,37 +836,42 @@ static ssize_t store_rps_dev_flow_table_cnt(struct netdev_rx_queue *queue,
 			return -EINVAL;
 		}
 #endif
+		/* 申请RFS表内存 */
 		table = vmalloc(RPS_DEV_FLOW_TABLE_SIZE(mask + 1));
 		if (!table)
 			return -ENOMEM;
 
+		/* 设置mask，以及初始化RFS表 */
 		table->mask = mask;
 		for (count = 0; count <= mask; count++)
 			table->flows[count].cpu = RPS_NO_CPU;
 	} else {
+		/* RFS的count为0，则关闭RFS */
 		table = NULL;
 	}
 
+	/* 使用新的RFS表替换旧表 */
 	spin_lock(&rps_dev_flow_lock);
 	old_table = rcu_dereference_protected(queue->rps_flow_table,
 					      lockdep_is_held(&rps_dev_flow_lock));
 	rcu_assign_pointer(queue->rps_flow_table, table);
 	spin_unlock(&rps_dev_flow_lock);
 
+	/* 使用RCU释放旧的RFS表 */
 	if (old_table)
 		call_rcu(&old_table->rcu, rps_dev_flow_table_release);
 
 	return len;
 }
-
+/* RPS的属性结构 */
 static struct rx_queue_attribute rps_cpus_attribute __ro_after_init
 	= __ATTR(rps_cpus, 0644, show_rps_map, store_rps_map);
-
+/* RFS的属性结构 */
 static struct rx_queue_attribute rps_dev_flow_table_cnt_attribute __ro_after_init
 	= __ATTR(rps_flow_cnt, 0644,
 		 show_rps_dev_flow_table_cnt, store_rps_dev_flow_table_cnt);
 #endif /* CONFIG_RPS */
-
+/* 接收队列的属性配置 */
 static struct attribute *rx_queue_default_attrs[] __ro_after_init = {
 #ifdef CONFIG_RPS
 	&rps_cpus_attribute.attr,

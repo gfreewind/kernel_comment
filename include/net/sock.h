@@ -929,6 +929,7 @@ static inline void sock_rps_record_flow_hash(__u32 hash)
 #endif
 }
 
+/* 记录RFS，在sock接口如accpet，send，recv等时调用 */
 static inline void sock_rps_record_flow(const struct sock *sk)
 {
 #ifdef CONFIG_RPS

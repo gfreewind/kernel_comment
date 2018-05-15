@@ -638,6 +638,7 @@ struct rps_dev_flow {
 /*
  * The rps_dev_flow_table structure contains a table of flow mappings.
  */
+/* 接收队列的RFS 表 */
 struct rps_dev_flow_table {
 	unsigned int mask;
 	struct rcu_head rcu;
@@ -656,6 +657,11 @@ struct rps_dev_flow_table {
  * For example, if 64 CPUs are possible, rps_cpu_mask = 0x3f,
  * meaning we use 32-6=26 bits for the hash.
  */
+/*
+全局RFS的表，其表项设计有个技巧
+ents的值被分为两部分：高位为hash值，低位为cpu号。
+通过高位的hash，可以尽可能的区分不同的连接。
+*/
 struct rps_sock_flow_table {
 	u32	mask;
 
@@ -673,12 +679,12 @@ static inline void rps_record_sock_flow(struct rps_sock_flow_table *table,
 {
 	if (table && hash) {
 		unsigned int index = hash & table->mask;
-		u32 val = hash & ~rps_cpu_mask;
+		u32 val = hash & ~rps_cpu_mask; //取hash值的高位
 
 		/* We only give a hint, preemption can change CPU under us */
-		val |= raw_smp_processor_id();
+		val |= raw_smp_processor_id(); // 设置当前CPU
 
-		if (table->ents[index] != val)
+		if (table->ents[index] != val) // 更新当前的表项
 			table->ents[index] = val;
 	}
 }

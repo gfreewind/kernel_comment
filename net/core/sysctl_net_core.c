@@ -35,6 +35,7 @@ int sysctl_fb_tunnels_only_for_init_net __read_mostly = 0;
 EXPORT_SYMBOL(sysctl_fb_tunnels_only_for_init_net);
 
 #ifdef CONFIG_RPS
+/* RFS全局表的处理函数，/proc/sys/net/core/rps_sock_flow_entries */
 static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp, loff_t *ppos)
 {
@@ -58,36 +59,44 @@ static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 
 	if (write) {
 		if (size) {
+			/* 防止溢出 */
 			if (size > 1<<29) {
 				/* Enforce limit to prevent overflow */
 				mutex_unlock(&sock_flow_mutex);
 				return -EINVAL;
 			}
+			/* 将size向上取到2^N */
 			size = roundup_pow_of_two(size);
 			if (size != orig_size) {
+				/* 新的size不等于之前的值，需要重新申请RFS表 */
 				sock_table =
 				    vmalloc(RPS_SOCK_FLOW_TABLE_SIZE(size));
 				if (!sock_table) {
 					mutex_unlock(&sock_flow_mutex);
 					return -ENOMEM;
 				}
+				/* 全局的RFS的CPU掩码 */
 				rps_cpu_mask = roundup_pow_of_two(nr_cpu_ids) - 1;
 				sock_table->mask = size - 1;
 			} else
 				sock_table = orig_sock_table;
 
+			/* 初始化RFS表 */
 			for (i = 0; i < size; i++)
 				sock_table->ents[i] = RPS_NO_CPU;
 		} else
 			sock_table = NULL;
 
 		if (sock_table != orig_sock_table) {
+			/* 新建了RFS表，则进行表的切换 */
 			rcu_assign_pointer(rps_sock_flow_table, sock_table);
 			if (sock_table) {
+				/* 新表，增加rps和rfs的开关计数 */
 				static_key_slow_inc(&rps_needed);
 				static_key_slow_inc(&rfs_needed);
 			}
 			if (orig_sock_table) {
+				/* 旧表，减少rps和rfs的开关计数，并释放旧表 */
 				static_key_slow_dec(&rps_needed);
 				static_key_slow_dec(&rfs_needed);
 				synchronize_rcu();
@@ -437,7 +446,7 @@ static struct ctl_table net_core_table[] = {
 	},
 #ifdef CONFIG_RPS
 	{
-		.procname	= "rps_sock_flow_entries",
+		.procname	= "rps_sock_flow_entries", // 设置全局的RFS表的条目数
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= rps_sock_flow_sysctl
