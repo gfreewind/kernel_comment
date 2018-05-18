@@ -4234,7 +4234,7 @@ static int netif_rx_internal(struct sk_buff *skb)
  *	NET_RX_DROP     (packet was dropped)
  *
  */
-
+/* 旧的收包接口，内核做了兼容NAPI的处理 */
 int netif_rx(struct sk_buff *skb)
 {
 	trace_netif_rx_entry(skb);
@@ -4507,6 +4507,7 @@ static int __netif_receive_skb_core(struct sk_buff *skb, bool pfmemalloc)
 
 	trace_netif_receive_skb(skb);
 
+	/* 保存原始的dev。后面的处理过程中，skb->dev会改变，如有虚拟netdev时。 */
 	orig_dev = skb->dev;
 
 	skb_reset_network_header(skb);
@@ -4523,6 +4524,10 @@ another_round:
 
 	if (skb->protocol == cpu_to_be16(ETH_P_8021Q) ||
 	    skb->protocol == cpu_to_be16(ETH_P_8021AD)) {
+	    /*
+	    去掉vlan tag，实际上就是将data移到vlan首部后面的位置。
+	    vlan信息直接保存在skb的成员变量中
+	    */
 		skb = skb_vlan_untag(skb);
 		if (unlikely(!skb))
 			goto out;
@@ -4534,12 +4539,14 @@ another_round:
 	if (pfmemalloc)
 		goto skip_taps;
 
+	/* 遍历注册在ptype_all所有的回调， 数据包类型ETH_P_ALL。使用dev_add_pack注册 */
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
 		if (pt_prev)
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 		pt_prev = ptype;
 	}
 
+	/* 遍历注册在bind在dev设备上，ptype_all所有的回调， 数据包类型ETH_P_ALL */
 	list_for_each_entry_rcu(ptype, &skb->dev->ptype_all, list) {
 		if (pt_prev)
 			ret = deliver_skb(skb, pt_prev, orig_dev);
@@ -4567,12 +4574,14 @@ skip_classify:
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
+		/* 进行vlan处理。处理过后，返回true，进行下一轮匹配 */
 		if (vlan_do_receive(&skb))
 			goto another_round;
 		else if (unlikely(!skb))
 			goto out;
 	}
 
+	/* 检查接收设备上有无接收出来回调函数，如macvlan */
 	rx_handler = rcu_dereference(skb->dev->rx_handler);
 	if (rx_handler) {
 		if (pt_prev) {
@@ -4595,6 +4604,7 @@ skip_classify:
 	}
 
 	if (unlikely(skb_vlan_tag_present(skb))) {
+		/* 如果这时还有vlan id，说明本机没有处理这个vlan数据包。那么这个vlan包就应该是发给其它主机的。*/
 		if (skb_vlan_tag_get_id(skb))
 			skb->pkt_type = PACKET_OTHERHOST;
 		/* Note: we might in the future use prio bits
@@ -4608,11 +4618,13 @@ skip_classify:
 
 	/* deliver only exact match when indicated */
 	if (likely(!deliver_exact)) {
+		/* 匹配注册的协议回调，使用dev_add_pack注册。 */
 		deliver_ptype_list_skb(skb, &pt_prev, orig_dev, type,
 				       &ptype_base[ntohs(type) &
 						   PTYPE_HASH_MASK]);
 	}
 
+	/* 匹配在设备上注册的协议回调 */
 	deliver_ptype_list_skb(skb, &pt_prev, orig_dev, type,
 			       &orig_dev->ptype_specific);
 
@@ -4786,7 +4798,7 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
  *	NET_RX_SUCCESS: no congestion
  *	NET_RX_DROP: packet was dropped
  */
-int netif_receive_skb(struct sk_buff *skb)
+int netif_receive_skb(struct sk_buff *skb) // 收包的处理函数
 {
 	trace_netif_receive_skb_entry(skb);
 
@@ -5828,11 +5840,12 @@ static __latent_entropy void net_rx_action(struct softirq_action *h)
 {
 	struct softnet_data *sd = this_cpu_ptr(&softnet_data);
 	unsigned long time_limit = jiffies +
-		usecs_to_jiffies(netdev_budget_usecs);
-	int budget = netdev_budget;
+		usecs_to_jiffies(netdev_budget_usecs); // 一次性最大处理时长
+	int budget = netdev_budget; // 一次性最大处理包的个数
 	LIST_HEAD(list);
 	LIST_HEAD(repoll);
 
+	/* 获得所有NAPI poll list */
 	local_irq_disable();
 	list_splice_init(&sd->poll_list, &list);
 	local_irq_enable();
@@ -5841,18 +5854,23 @@ static __latent_entropy void net_rx_action(struct softirq_action *h)
 		struct napi_struct *n;
 
 		if (list_empty(&list)) {
+			/* 当前poll list为空，如果也没有待发送的IPI和repoll list也为空，就跳转到out，退出软中断 */
 			if (!sd_has_rps_ipi_waiting(sd) && list_empty(&repoll))
 				goto out;
+			/* 跳出处理接收数据包的循环 */
 			break;
 		}
 
+		/* 从list节点，变为NAPI结构 */
 		n = list_first_entry(&list, struct napi_struct, poll_list);
+		/* 执行驱动poll操作。若驱动还有未取的数据包， 则会再次加入到repoll中 */
 		budget -= napi_poll(n, &repoll);
 
 		/* If softirq window is exhausted then punt.
 		 * Allow this to run for 2 jiffies since which will allow
 		 * an average latency of 1.5/HZ.
 		 */
+		/* 达到处理上限，退出此次软中断 */
 		if (unlikely(budget <= 0 ||
 			     time_after_eq(jiffies, time_limit))) {
 			sd->time_squeeze++;
@@ -5862,14 +5880,18 @@ static __latent_entropy void net_rx_action(struct softirq_action *h)
 
 	local_irq_disable();
 
+	/* 将可能未处理的list，新加入的sd->poll_list，以及repoll合为一个链表，并重新设置给sd->poll_list */
 	list_splice_tail_init(&sd->poll_list, &list);
 	list_splice_tail(&repoll, &list);
 	list_splice(&list, &sd->poll_list);
+	/* 有待处理的poll设备，则再次激活接收软中断 */
 	if (!list_empty(&sd->poll_list))
 		__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 
+	/* 向其它核心发送RPS IPI */
 	net_rps_action_and_irq_enable(sd);
 out:
+	/* 批量释放skb */
 	__kfree_skb_flush();
 }
 
@@ -9137,6 +9159,7 @@ static int __init net_dev_init(void)
 	if (register_pernet_device(&default_device_ops))
 		goto out;
 
+	/* 注册发送和接收软中断的处理函数 */
 	open_softirq(NET_TX_SOFTIRQ, net_tx_action);
 	open_softirq(NET_RX_SOFTIRQ, net_rx_action);
 
