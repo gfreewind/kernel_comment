@@ -1889,18 +1889,22 @@ static int __init inet_init(void)
 
 	sock_skb_cb_check_size(sizeof(struct inet_skb_parm));
 
+	/* 注册TCP socket接口。这里的协议注册没有太大用处，并没有建立上下层的关系。*/
 	rc = proto_register(&tcp_prot, 1);
 	if (rc)
 		goto out;
 
+	/* 注册UDP socket接口。这里的协议注册没有太大用处，并没有建立上下层的关系。*/
 	rc = proto_register(&udp_prot, 1);
 	if (rc)
 		goto out_unregister_tcp_proto;
 
+	/* 注册raw socket接口。这里的协议注册没有太大用处，并没有建立上下层的关系。*/
 	rc = proto_register(&raw_prot, 1);
 	if (rc)
 		goto out_unregister_udp_proto;
 
+	/* 注册ping socket接口。这里的协议注册没有太大用处，并没有建立上下层的关系。*/
 	rc = proto_register(&ping_prot, 1);
 	if (rc)
 		goto out_unregister_raw_proto;
@@ -1908,7 +1912,7 @@ static int __init inet_init(void)
 	/*
 	 *	Tell SOCKET that we are alive...
 	 */
-
+	/* 注册inet协议族接口，以供socket层调用。*/
 	(void)sock_register(&inet_family_ops);
 
 #ifdef CONFIG_SYSCTL
@@ -1919,23 +1923,37 @@ static int __init inet_init(void)
 	 *	Add all the base protocols.
 	 */
 
+	/* 在inet协议族中，增加icmp协议。面向底层，主要用于收包 */
 	if (inet_add_protocol(&icmp_protocol, IPPROTO_ICMP) < 0)
 		pr_crit("%s: Cannot add ICMP protocol\n", __func__);
+	/* 在inet协议族中，增加udp协议。面向底层，主要用于收包 */
 	if (inet_add_protocol(&udp_protocol, IPPROTO_UDP) < 0)
 		pr_crit("%s: Cannot add UDP protocol\n", __func__);
+	/* 在inet协议族中，增加tcp协议。面向底层，主要用于收包 */
 	if (inet_add_protocol(&tcp_protocol, IPPROTO_TCP) < 0)
 		pr_crit("%s: Cannot add TCP protocol\n", __func__);
 #ifdef CONFIG_IP_MULTICAST
+	/* 在inet协议族中，增加igmp协议。面向底层，主要用于收包 */
 	if (inet_add_protocol(&igmp_protocol, IPPROTO_IGMP) < 0)
 		pr_crit("%s: Cannot add IGMP protocol\n", __func__);
 #endif
 
 	/* Register the socket-side information for inet_create. */
+	/*
+	初始化inet协议族的协议链表。该链表用于保存inet协议族支持的socket和协议,面向上层应用。
+	每个socket类型为一个链表，如SOCK_STREAM，SOCK_DGRAM，和SOCK_RAW等。
+	链表中的节点为同类型socket，不同类型协议，如IPPROTO_TCP，IPPROTO_UDP和IPPROTO_IP等。
+	*/
 	for (r = &inetsw[0]; r < &inetsw[SOCK_MAX]; ++r)
 		INIT_LIST_HEAD(r);
 
+	/*
+	inetsw_array数组定义了内核中永久支持的inet协议族的协议，如TCP，UDP等。
+	这个数组的元素引用了前面的tcp_proto，udp_proto等，以供上层调用。
+	协议会注册到前面的inetsw链表中。
+	*/
 	for (q = inetsw_array; q < &inetsw_array[INETSW_ARRAY_LEN]; ++q)
-		inet_register_protosw(q);
+		inet_register_protosw(q); // 注册inet协议族的协议，面向socket层
 
 	/*
 	 *	Set the ARP module up
