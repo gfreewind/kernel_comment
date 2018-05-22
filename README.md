@@ -17,7 +17,9 @@
 
 因为自己的领域是网络，所以一直关注和熟悉的也只是内核的网络模块。所以以我个人而言，初期会聚焦于内核网络模块代码的注释和笔记。深切希望有其他领域的大牛同学来负责其它内核模块。
 
-欢迎各路大牛贡献merge request~~
+欢迎各路大牛贡献merge request~~  
+
+本项目会紧跟由David负责的网络主线版本net.git，即git://git.kernel.org/pub/scm/linux/kernel/git/davem/net.git
 
 ## commit要求  
 
