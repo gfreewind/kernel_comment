@@ -4510,6 +4510,7 @@ static int __netif_receive_skb_core(struct sk_buff *skb, bool pfmemalloc)
 	/* 保存原始的dev。后面的处理过程中，skb->dev会改变，如有虚拟netdev时。 */
 	orig_dev = skb->dev;
 
+	/* 设置网络层首部位置 */
 	skb_reset_network_header(skb);
 	if (!skb_transport_header_was_set(skb))
 		skb_reset_transport_header(skb);

@@ -666,7 +666,7 @@ struct sk_buff {
 			struct sk_buff		*prev;
 
 			union {
-				struct net_device	*dev;
+				struct net_device	*dev; // 收包或发包的netdev
 				/* Some protocols might use this space to store information,
 				 * while device pointer would be NULL.
 				 * UDP receive path is one user.
@@ -677,7 +677,7 @@ struct sk_buff {
 		};
 		struct rb_node	rbnode; /* used in netem & tcp stack */
 	};
-	struct sock		*sk;
+	struct sock		*sk; // socket的内核结构
 
 	union {
 		ktime_t		tstamp;
@@ -693,7 +693,7 @@ struct sk_buff {
 
 	union {
 		struct {
-			unsigned long	_skb_refdst;
+			unsigned long	_skb_refdst; //下一跳
 			void		(*destructor)(struct sk_buff *skb);
 		};
 		struct list_head	tcp_tsorted_anchor;
@@ -708,7 +708,7 @@ struct sk_buff {
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	struct nf_bridge_info	*nf_bridge;
 #endif
-	unsigned int		len,
+	unsigned int		len, // skb的data数据段长度
 				data_len;
 	__u16			mac_len,
 				hdr_len;
@@ -840,10 +840,15 @@ struct sk_buff {
 	/* public: */
 
 	/* These elements must be at the end, see alloc_skb() for details.  */
-	sk_buff_data_t		tail;
-	sk_buff_data_t		end;
-	unsigned char		*head,
-				*data;
+	/*
+	关于head,data,tail,和end，是skb非常重要的成员。也是理解skb内存组织结构的关键。
+	请看net模块的负责人David写的文档，http://vger.kernel.org/~davem/skb_data.html。
+	看完这个文档，相信你就很清楚了。我就不在这里献丑了。
+	*/
+	sk_buff_data_t		tail; // skb的数据内容结束地址，随数据内容变化。skb_push增加tail值，
+	sk_buff_data_t		end; // skb数据段的终止位置，除重新分配外，不会变化
+	unsigned char		*head, //skb数据段的起始地址，除重新分配外，不会变化
+				*data; //skb的数据内容起始地址，随协议层变化而变化。skb_pull会让data向后移动，skb_push让data向前移动
 	unsigned int		truesize;
 	refcount_t		users;
 };

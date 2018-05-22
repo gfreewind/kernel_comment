@@ -190,7 +190,7 @@ bool ip_call_ra_chain(struct sk_buff *skb)
 
 static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	__skb_pull(skb, skb_network_header_len(skb));
+	__skb_pull(skb, skb_network_header_len(skb)); // pull掉网络层首部 —— 因为已经结束了网络层的处理
 
 	rcu_read_lock();
 	{
@@ -199,8 +199,12 @@ static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_b
 		int raw;
 
 	resubmit:
-		raw = raw_local_deliver(skb, protocol);
+		raw = raw_local_deliver(skb, protocol); // 将skb传给raw socket处理
 
+		/*
+		根据协议，调用对应的传输层处理函数。
+		这里的协议是用inet_add_protocol函数注册的，如inet_int注册的icmp_protocol等。
+		*/
 		ipprot = rcu_dereference(inet_protos[protocol]);
 		if (ipprot) {
 			int ret;
@@ -248,11 +252,13 @@ int ip_local_deliver(struct sk_buff *skb)
 	 */
 	struct net *net = dev_net(skb->dev);
 
+	/* 对IP分片进行处理 */
 	if (ip_is_fragment(ip_hdr(skb))) {
 		if (ip_defrag(net, skb, IP_DEFRAG_LOCAL_DELIVER))
 			return 0;
 	}
 
+	/* 执行netfilter在localin上的hook。执行成功后，调用ip_local_deliver_finish */
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN,
 		       net, NULL, skb, skb->dev, NULL,
 		       ip_local_deliver_finish);
@@ -322,6 +328,7 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 	if (!skb)
 		return NET_RX_SUCCESS;
 
+	/* 判断是否可以进行early demux优化 */
 	if (net->ipv4.sysctl_ip_early_demux &&
 	    !skb_dst(skb) &&
 	    !skb->sk &&
@@ -343,7 +350,7 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 	 *	Initialise the virtual path cache for the packet. It describes
 	 *	how the packet travels inside Linux networking.
 	 */
-	if (!skb_valid_dst(skb)) {
+	if (!skb_valid_dst(skb)) { // 如果skb目前没有dst，需要进行路由查找
 		err = ip_route_input_noref(skb, iph->daddr, iph->saddr,
 					   iph->tos, dev);
 		if (unlikely(err))
@@ -361,7 +368,7 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 	}
 #endif
 
-	if (iph->ihl > 5 && ip_rcv_options(skb))
+	if (iph->ihl > 5 && ip_rcv_options(skb)) // 处理IP option
 		goto drop;
 
 	rt = skb_rtable(skb);
@@ -393,6 +400,11 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 			goto drop;
 	}
 
+	/*
+	调用dst->input回调。
+	对于本地报文：其为ip_local_deliver
+	对于转发报文：其为ip_forward
+	 */
 	return dst_input(skb);
 
 drop:
@@ -417,23 +429,26 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	/* When the interface is in promisc. mode, drop all the crap
 	 * that it receives, do not try to analyse it.
 	 */
-	if (skb->pkt_type == PACKET_OTHERHOST)
+	if (skb->pkt_type == PACKET_OTHERHOST) //该skb是发给其它主机的，直接丢弃
 		goto drop;
 
 
 	net = dev_net(dev);
 	__IP_UPD_PO_STATS(net, IPSTATS_MIB_IN, skb->len);
 
+	/* 该数据包有可能会被多处处理，而被shared。进入ip_rcv后，
+	可能会对报文进行修改，需要clone一个skb再进行处理 */
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (!skb) {
 		__IP_INC_STATS(net, IPSTATS_MIB_INDISCARDS);
 		goto out;
 	}
 
+	/* skb并不能保证是其数据段是线性内存。所以需要在使用IP首部指针前，调用pskb_may_pull保证其位于线性内存 */
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		goto inhdr_error;
 
-	iph = ip_hdr(skb);
+	iph = ip_hdr(skb); // 获得IP固定首部
 
 	/*
 	 *	RFC1122: 3.2.1.2 MUST silently discard any IP frame that fails the checksum.
@@ -456,14 +471,18 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 		       IPSTATS_MIB_NOECTPKTS + (iph->tos & INET_ECN_MASK),
 		       max_t(unsigned short, 1, skb_shinfo(skb)->gso_segs));
 
-	if (!pskb_may_pull(skb, iph->ihl*4))
+	if (!pskb_may_pull(skb, iph->ihl*4)) // 确保IP首部是线性可访问的(固定+option)
 		goto inhdr_error;
-
+	/*
+	因为pskb_may_pull可能会重新申请skb的data段内存，所以需要重新获得IP首部指针。
+	这是内核中非常容易犯错的地方。
+	*/
 	iph = ip_hdr(skb);
 
-	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
+	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl))) // 检查IP校验和
 		goto csum_error;
 
+	/* 对报文长度做长度检查 */
 	len = ntohs(iph->tot_len);
 	if (skb->len < len) {
 		__IP_INC_STATS(net, IPSTATS_MIB_INTRUNCATEDPKTS);
@@ -480,15 +499,16 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 		goto drop;
 	}
 
-	skb->transport_header = skb->network_header + iph->ihl*4;
+	skb->transport_header = skb->network_header + iph->ihl*4; // 设置传输层首部位置
 
 	/* Remove any debris in the socket control block */
-	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
+	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm)); // skb的control block是每层自定义的，只限该层内部使用。
 	IPCB(skb)->iif = skb->skb_iif;
 
 	/* Must drop socket now because of tproxy. */
 	skb_orphan(skb);
 
+	/* 执行netfilter在PREROUTING上的hook。执行成功后，调用ip_rcv_finish */
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING,
 		       net, NULL, skb, dev, NULL,
 		       ip_rcv_finish);

@@ -153,14 +153,15 @@ EXPORT_SYMBOL(eth_get_headlen);
  * assume 802.3 if the type field is short enough to be a length.
  * This is normal practice and works for any 'now in use' protocol.
  */
+/* 以太帧数据包类型判断，大部分网卡在收包完成后，都要调用该函数。 */
 __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 {
 	unsigned short _service_access_point;
 	const unsigned short *sap;
 	const struct ethhdr *eth;
 
-	skb->dev = dev;
-	skb_reset_mac_header(skb);
+	skb->dev = dev; // 设置收包网卡dev
+	skb_reset_mac_header(skb); // 设置MAC首部
 
 	eth = (struct ethhdr *)skb->data;
 	skb_pull_inline(skb, ETH_HLEN);
