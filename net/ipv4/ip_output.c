@@ -196,7 +196,7 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 		IP_UPD_PO_STATS(net, IPSTATS_MIB_OUTBCAST, skb->len);
 
 	/* Be paranoid, rather than too clever. */
-	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
+	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) { // skb的头部空间不够保存二层首部，需要重新分配
 		struct sk_buff *skb2;
 
 		skb2 = skb_realloc_headroom(skb, LL_RESERVED_SPACE(dev));
@@ -218,15 +218,15 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 	}
 
 	rcu_read_lock_bh();
-	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
-	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
+	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr); // 得到下一跳的IP地址
+	neigh = __ipv4_neigh_lookup_noref(dev, nexthop); // 查询neighbor信息
 	if (unlikely(!neigh))
 		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);
-	if (!IS_ERR(neigh)) {
+	if (!IS_ERR(neigh)) { // 找到或者新建了neighbor
 		int res;
 
 		sock_confirm_neigh(skb, neigh);
-		res = neigh_output(neigh, skb);
+		res = neigh_output(neigh, skb); //调用neighbor的output回调。根据neighbor的状态执行不同的输出函数
 
 		rcu_read_unlock_bh();
 		return res;
@@ -307,10 +307,18 @@ static int ip_finish_output(struct net *net, struct sock *sk, struct sk_buff *sk
 		return dst_output(net, sk, skb);
 	}
 #endif
-	mtu = ip_skb_dst_mtu(sk, skb);
-	if (skb_is_gso(skb))
+	mtu = ip_skb_dst_mtu(sk, skb); //得到下一跳dst的MTU
+	/*
+	GSO是软件实现的一种offload。关于offload，有TSO，UFO，GSO，GRO等。
+	傻傻分不清楚怎么办，请看https://www.kernel.org/doc/Documentation/networking/segmentation-offloads.txt
+	*/
+	if (skb_is_gso(skb)) //该skb是gso，需要调用ip_finish_output_gso发送
 		return ip_finish_output_gso(net, sk, skb, mtu);
 
+	/*
+	1. 数据包长度大于mtu，当然需要分片；
+	2. 设置了标志：只有在接收到的IP分片中，给最大的分片设置上IPSKB_FRAG_PMTU和DF标志，避免发送很多小的DF分片；
+	*/
 	if (skb->len > mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU))
 		return ip_fragment(net, sk, skb, mtu, ip_finish_output2);
 
@@ -399,9 +407,10 @@ int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 
 	IP_UPD_PO_STATS(net, IPSTATS_MIB_OUT, skb->len);
 
-	skb->dev = dev;
-	skb->protocol = htons(ETH_P_IP);
+	skb->dev = dev; // 设置发送netdev
+	skb->protocol = htons(ETH_P_IP); //设置协议
 
+	/* 执行netfilter的postrouting点的hook函数 */
 	return NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,
 			    net, sk, skb, NULL, dev,
 			    ip_finish_output,

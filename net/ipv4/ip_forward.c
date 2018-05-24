@@ -70,9 +70,9 @@ static int ip_forward_finish(struct net *net, struct sock *sk, struct sk_buff *s
 	__IP_ADD_STATS(net, IPSTATS_MIB_OUTOCTETS, skb->len);
 
 	if (unlikely(opt->optlen))
-		ip_forward_options(skb);
+		ip_forward_options(skb); //处理forward相关的ip option
 
-	return dst_output(net, sk, skb);
+	return dst_output(net, sk, skb); // 调用dst->output回调，对于IP报文来说，为ip_output
 }
 
 int ip_forward(struct sk_buff *skb)
@@ -84,10 +84,10 @@ int ip_forward(struct sk_buff *skb)
 	struct net *net;
 
 	/* that should never happen */
-	if (skb->pkt_type != PACKET_HOST)
+	if (skb->pkt_type != PACKET_HOST) // 丢弃发给本机的skb
 		goto drop;
 
-	if (unlikely(skb->sk))
+	if (unlikely(skb->sk)) // 丢弃匹配了socket的skb
 		goto drop;
 
 	if (skb_warn_if_lro(skb))
@@ -96,7 +96,7 @@ int ip_forward(struct sk_buff *skb)
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_FWD, skb))
 		goto drop;
 
-	if (IPCB(skb)->opt.router_alert && ip_call_ra_chain(skb))
+	if (IPCB(skb)->opt.router_alert && ip_call_ra_chain(skb)) //处理Router Attention IP option
 		return NET_RX_SUCCESS;
 
 	skb_forward_csum(skb);
@@ -128,9 +128,9 @@ int ip_forward(struct sk_buff *skb)
 	}
 
 	/* We are about to mangle packet. Copy it! */
-	if (skb_cow(skb, LL_RESERVED_SPACE(rt->dst.dev)+rt->dst.header_len))
+	if (skb_cow(skb, LL_RESERVED_SPACE(rt->dst.dev)+rt->dst.header_len)) //因为要修改二层包头，需要保证数据段头部有足够空间
 		goto drop;
-	iph = ip_hdr(skb);
+	iph = ip_hdr(skb); //skb_cow有可能重新申请skb的data段内存，所以需要重新获得ip首部指针
 
 	/* Decrease ttl after skb cow done */
 	ip_decrease_ttl(iph);
@@ -145,6 +145,7 @@ int ip_forward(struct sk_buff *skb)
 
 	skb->priority = rt_tos2priority(iph->tos);
 
+	/* 执行netfilter的forward点上所有hook，成功返回后，调用ip_forward_finish */
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD,
 		       net, NULL, skb, skb->dev, rt->dst.dev,
 		       ip_forward_finish);
