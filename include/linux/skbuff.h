@@ -830,7 +830,7 @@ struct sk_buff {
 	__u16			inner_network_header;
 	__u16			inner_mac_header;
 
-	__be16			protocol;
+	__be16			protocol; // skb的协议类型，随网络层次变化而变化。如二层时，是二层协议类型；三层时，是三层协议类型;
 	__u16			transport_header;
 	__u16			network_header;
 	__u16			mac_header;
