@@ -191,6 +191,7 @@ int nf_hook_slow(struct sk_buff *skb, struct nf_hook_state *state,
  *	okfn must be invoked by the caller in this case.  Any other return
  *	value indicates the packet has been consumed by the hook.
  */
+/* 执行netfilter对应协议族的hook调用。1. 内置hook；2. iptables表的规则；3. 外部模块注册的hook； */
 static inline int nf_hook(u_int8_t pf, unsigned int hook, struct net *net,
 			  struct sock *sk, struct sk_buff *skb,
 			  struct net_device *indev, struct net_device *outdev,
@@ -202,7 +203,7 @@ static inline int nf_hook(u_int8_t pf, unsigned int hook, struct net *net,
 #ifdef HAVE_JUMP_LABEL
 	if (__builtin_constant_p(pf) &&
 	    __builtin_constant_p(hook) &&
-	    !static_key_false(&nf_hooks_needed[pf][hook]))
+	    !static_key_false(&nf_hooks_needed[pf][hook])) // 快速检查
 		return 1;
 #endif
 

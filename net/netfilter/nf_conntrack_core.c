@@ -577,11 +577,11 @@ begin:
 	h = ____nf_conntrack_find(net, zone, tuple, hash);
 	if (h) {
 		ct = nf_ct_tuplehash_to_ctrack(h);
-		if (unlikely(nf_ct_is_dying(ct) ||
-			     !atomic_inc_not_zero(&ct->ct_general.use)))
-			h = NULL;
+		if (unlikely(nf_ct_is_dying(ct) || // 连接处于dying状态，马上就要被删除了
+			     !atomic_inc_not_zero(&ct->ct_general.use))) // 不能在非0情况下增加引用，即连接已经处于即将释放状态
+			h = NULL; // 设置h为NULL，即表示没有匹配
 		else {
-			if (unlikely(!nf_ct_key_equal(h, tuple, zone, net))) {
+			if (unlikely(!nf_ct_key_equal(h, tuple, zone, net))) { // nf_ct_key_equal用来确定该连接和tuple确实匹配
 				nf_ct_put(ct);
 				goto begin;
 			}
@@ -1322,6 +1322,7 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
 	struct nf_conn *ct;
 	u32 hash;
 
+	/* 根据3层和4层协议，获得当前方向的tuple */
 	if (!nf_ct_get_tuple(skb, skb_network_offset(skb),
 			     dataoff, l3num, protonum, net, &tuple, l3proto,
 			     l4proto)) {
@@ -1331,9 +1332,9 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
 
 	/* look for tuple match */
 	zone = nf_ct_zone_tmpl(tmpl, skb, &tmp);
-	hash = hash_conntrack_raw(&tuple, net);
-	h = __nf_conntrack_find_get(net, zone, &tuple, hash);
-	if (!h) {
+	hash = hash_conntrack_raw(&tuple, net); // 获得tuple的hash值
+	h = __nf_conntrack_find_get(net, zone, &tuple, hash); // 查找连接
+	if (!h) { //没有找到，则需要建立一个新连接
 		h = init_conntrack(net, tmpl, &tuple, l3proto, l4proto,
 				   skb, dataoff, hash);
 		if (!h)
@@ -1341,25 +1342,25 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
 		if (IS_ERR(h))
 			return PTR_ERR(h);
 	}
-	ct = nf_ct_tuplehash_to_ctrack(h);
+	ct = nf_ct_tuplehash_to_ctrack(h); //由tuple hash转为连接
 
 	/* It exists; we have (non-exclusive) reference. */
-	if (NF_CT_DIRECTION(h) == IP_CT_DIR_REPLY) {
+	if (NF_CT_DIRECTION(h) == IP_CT_DIR_REPLY) {// 如果匹配的是REPLY方向
 		ctinfo = IP_CT_ESTABLISHED_REPLY;
-	} else {
+	} else { // Original 方向
 		/* Once we've had two way comms, always ESTABLISHED. */
-		if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {
+		if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {//之前收到过REPLY
 			pr_debug("normal packet for %p\n", ct);
-			ctinfo = IP_CT_ESTABLISHED;
+			ctinfo = IP_CT_ESTABLISHED; // 设置为established
 		} else if (test_bit(IPS_EXPECTED_BIT, &ct->status)) {
 			pr_debug("related packet for %p\n", ct);
-			ctinfo = IP_CT_RELATED;
+			ctinfo = IP_CT_RELATED; // 这是一个关联连接
 		} else {
 			pr_debug("new packet for %p\n", ct);
-			ctinfo = IP_CT_NEW;
+			ctinfo = IP_CT_NEW; // 新连接
 		}
 	}
-	nf_ct_set(skb, ct, ctinfo);
+	nf_ct_set(skb, ct, ctinfo);//设置skb的连接信息
 	return 0;
 }
 
@@ -1376,21 +1377,32 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
 	u_int8_t protonum;
 	int ret;
 
+	/*
+	nf_conntrack_in是用来连接跟踪的入口函数，这时就调用nf_ct_get来获得连接信息。
+	正常来说，应该是拿不到连接信息的。
+	但是netfilter有template conn的机制，如synproxy, CT等。在这些模块中，会设置skb->ct为该模块的templ conn。
+	*/
 	tmpl = nf_ct_get(skb, &ctinfo);
-	if (tmpl || ctinfo == IP_CT_UNTRACKED) {
+	if (tmpl || ctinfo == IP_CT_UNTRACKED) { // 有连接信息或者skb被设置了不要进行track即连接跟踪
 		/* Previously seen (loopback or untracked)?  Ignore. */
+		/*
+		2种情况，不再进行连接跟踪：
+		1. 确实有连接，且不是templ conn；那么意味着该skb被处理过，有可能回环的数据包；也有其他可能；
+		2. 该skb被设置了不要被连接跟踪
+		这时，就不要进行会话匹配了，直接返回；
+		*/
 		if ((tmpl && !nf_ct_is_template(tmpl)) ||
 		     ctinfo == IP_CT_UNTRACKED) {
 			NF_CT_STAT_INC_ATOMIC(net, ignore);
 			return NF_ACCEPT;
 		}
-		skb->_nfct = 0;
+		skb->_nfct = 0; // 不是上面的两种情况，则清除掉当前skb的连接信息；
 	}
 
 	/* rcu_read_lock()ed by nf_hook_thresh */
-	l3proto = __nf_ct_l3proto_find(pf);
+	l3proto = __nf_ct_l3proto_find(pf); // 根据协议族获得3层协议
 	ret = l3proto->get_l4proto(skb, skb_network_offset(skb),
-				   &dataoff, &protonum);
+				   &dataoff, &protonum); // 调用3层协议的get_l4proto回调，获得4层协议号
 	if (ret <= 0) {
 		pr_debug("not prepared to track yet or error occurred\n");
 		NF_CT_STAT_INC_ATOMIC(net, error);
@@ -1399,26 +1411,26 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
 		goto out;
 	}
 
-	l4proto = __nf_ct_l4proto_find(pf, protonum);
+	l4proto = __nf_ct_l4proto_find(pf, protonum); //根据协议族和4层协议号，获得4层协议
 
 	/* It may be an special packet, error, unclean...
 	 * inverse of the return code tells to the netfilter
 	 * core what to do with the packet. */
-	if (l4proto->error != NULL) {
+	if (l4proto->error != NULL) { //调用4层协议的错误检查回调（如果有的话）
 		ret = l4proto->error(net, tmpl, skb, dataoff, pf, hooknum);
-		if (ret <= 0) {
+		if (ret <= 0) { // 没有错误返回NF_ACCEPT(值为1) —— 可以吐槽netfilter有些代码返回值检查。如果成功返回NF_ACCEPT，那返回值就用NF_ACCEPT而不是magic number。类似的代码还是比较多的。
 			NF_CT_STAT_INC_ATOMIC(net, error);
 			NF_CT_STAT_INC_ATOMIC(net, invalid);
 			ret = -ret;
 			goto out;
 		}
 		/* ICMP[v6] protocol trackers may assign one conntrack. */
-		if (skb->_nfct)
+		if (skb->_nfct) // 如注释所言，如果4层协议是icmp的话，有可能已经在error回调中匹配到了连接。那就跳过后面的操作，直接返回。
 			goto out;
 	}
 repeat:
 	ret = resolve_normal_ct(net, tmpl, skb, dataoff, pf, protonum,
-				l3proto, l4proto);
+				l3proto, l4proto); // 匹配对应连接
 	if (ret < 0) {
 		/* Too stressed to deal. */
 		NF_CT_STAT_INC_ATOMIC(net, drop);
@@ -1435,10 +1447,10 @@ repeat:
 	}
 
 	/* Decide what timeout policy we want to apply to this flow. */
-	timeouts = nf_ct_timeout_lookup(net, ct, l4proto);
+	timeouts = nf_ct_timeout_lookup(net, ct, l4proto); // 获得超时时间
 
-	ret = l4proto->packet(ct, skb, dataoff, ctinfo, timeouts);
-	if (ret <= 0) {
+	ret = l4proto->packet(ct, skb, dataoff, ctinfo, timeouts); //调用4层协议的packet回调。不同协议有不同的处理，如tcp会维护一些内部状态。
+	if (ret <= 0) { // packet回调也可能对数据包进行检查。
 		/* Invalid: inverse of the return code tells
 		 * the netfilter core what to do */
 		pr_debug("nf_conntrack_in: Can't track with proto module\n");
@@ -1457,6 +1469,7 @@ repeat:
 		goto out;
 	}
 
+	/* 如果连接是已建立且REPLY方向，则设置连接状态为收到REPLY标志 */
 	if (ctinfo == IP_CT_ESTABLISHED_REPLY &&
 	    !test_and_set_bit(IPS_SEEN_REPLY_BIT, &ct->status))
 		nf_conntrack_event_cache(IPCT_REPLY, ct);

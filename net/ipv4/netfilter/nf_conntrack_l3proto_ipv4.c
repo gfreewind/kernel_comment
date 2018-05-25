@@ -175,12 +175,14 @@ static unsigned int ipv4_conntrack_local(void *priv,
 /* Connection tracking may drop packets, but never alters them, so
    make it the first hook. */
 static const struct nf_hook_ops ipv4_conntrack_ops[] = {
+	// 收包的连接跟踪处理
 	{
 		.hook		= ipv4_conntrack_in,
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_PRE_ROUTING,
 		.priority	= NF_IP_PRI_CONNTRACK,
 	},
+	// 本机发包的连接跟踪处理
 	{
 		.hook		= ipv4_conntrack_local,
 		.pf		= NFPROTO_IPV4,
