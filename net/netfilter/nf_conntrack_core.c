@@ -1196,6 +1196,10 @@ EXPORT_SYMBOL_GPL(nf_conntrack_free);
 
 /* Allocate a new conntrack: we return -ENOMEM if classification
    failed due to stress.  Otherwise it really is unclassifiable. */
+/*
+在这个函数中，会接触到conntrack的一些辅助功能：如extent扩展，expect关联连接，helper扩展等。
+这些功能不在本函数中说明，留到其具体实现中进行解释。
+*/
 static noinline struct nf_conntrack_tuple_hash *
 init_conntrack(struct net *net, struct nf_conn *tmpl,
 	       const struct nf_conntrack_tuple *tuple,
@@ -1214,22 +1218,23 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 	struct nf_conntrack_zone tmp;
 	unsigned int *timeouts;
 
-	if (!nf_ct_invert_tuple(&repl_tuple, tuple, l3proto, l4proto)) {
+	if (!nf_ct_invert_tuple(&repl_tuple, tuple, l3proto, l4proto)) { // 从tuple得到reply tuple
 		pr_debug("Can't invert tuple.\n");
 		return NULL;
 	}
 
 	zone = nf_ct_zone_tmpl(tmpl, skb, &tmp);
 	ct = __nf_conntrack_alloc(net, zone, tuple, &repl_tuple, GFP_ATOMIC,
-				  hash);
+				  hash); // 申请一个conntrack
 	if (IS_ERR(ct))
 		return (struct nf_conntrack_tuple_hash *)ct;
 
-	if (!nf_ct_add_synproxy(ct, tmpl)) {
+	if (!nf_ct_add_synproxy(ct, tmpl)) { //如果有SynProxy templ，就为当前连接增加SynProxy扩展
 		nf_conntrack_free(ct);
 		return ERR_PTR(-ENOMEM);
 	}
 
+	/* 获得超时时间。tmpl有timeout扩展，就使用其timeout；没有就使用4层协议的超时回调 */
 	timeout_ext = tmpl ? nf_ct_timeout_find(tmpl) : NULL;
 	if (timeout_ext) {
 		timeouts = nf_ct_timeout_data(timeout_ext);
@@ -1239,7 +1244,7 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 		timeouts = l4proto->get_timeouts(net);
 	}
 
-	if (!l4proto->new(ct, skb, dataoff, timeouts)) {
+	if (!l4proto->new(ct, skb, dataoff, timeouts)) { // 执行4层协议的new回调
 		nf_conntrack_free(ct);
 		pr_debug("can't track with proto module\n");
 		return NULL;
@@ -1247,8 +1252,9 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 
 	if (timeout_ext)
 		nf_ct_timeout_ext_add(ct, rcu_dereference(timeout_ext->timeout),
-				      GFP_ATOMIC);
+				      GFP_ATOMIC); //给当前连接加上timeout扩展
 
+	/* 给当前连接，增加必要的扩展 */
 	nf_ct_acct_ext_add(ct, GFP_ATOMIC);
 	nf_ct_tstamp_ext_add(ct, GFP_ATOMIC);
 	nf_ct_labels_ext_add(ct);
@@ -1259,23 +1265,24 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 			     GFP_ATOMIC);
 
 	local_bh_disable();
-	if (net->ct.expect_count) {
+	if (net->ct.expect_count) { // 当前有expect关联连接
 		spin_lock(&nf_conntrack_expect_lock);
-		exp = nf_ct_find_expectation(net, zone, tuple);
-		if (exp) {
+		exp = nf_ct_find_expectation(net, zone, tuple); //查询当前连接是否是expect的连接
+		if (exp) {// 本连接是expected连接
 			pr_debug("expectation arrives ct=%p exp=%p\n",
 				 ct, exp);
 			/* Welcome, Mr. Bond.  We've been expecting you... */
 			__set_bit(IPS_EXPECTED_BIT, &ct->status);
 			/* exp->master safe, refcnt bumped in nf_ct_find_expectation */
-			ct->master = exp->master;
-			if (exp->helper) {
+			ct->master = exp->master; // 建立连接关系
+			if (exp->helper) { // 如果有helper扩展，就给本连接增加helper扩展。helper扩展一般用于具体协议的alg。
 				help = nf_ct_helper_ext_add(ct, exp->helper,
 							    GFP_ATOMIC);
 				if (help)
 					rcu_assign_pointer(help->helper, exp->helper);
 			}
 
+			/* expected连接要与master连接的mark值相同。该mark可以被用于路由，tc等， 所以要保持一致。*/
 #ifdef CONFIG_NF_CONNTRACK_MARK
 			ct->mark = exp->master->mark;
 #endif
@@ -1287,11 +1294,11 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 		spin_unlock(&nf_conntrack_expect_lock);
 	}
 	if (!exp)
-		__nf_ct_try_assign_helper(ct, tmpl, GFP_ATOMIC);
+		__nf_ct_try_assign_helper(ct, tmpl, GFP_ATOMIC); // 如需要，为当前连接加上helper扩展
 
 	/* Now it is inserted into the unconfirmed list, bump refcount */
-	nf_conntrack_get(&ct->ct_general);
-	nf_ct_add_to_unconfirmed_list(ct);
+	nf_conntrack_get(&ct->ct_general); // 增加引用计数
+	nf_ct_add_to_unconfirmed_list(ct); // 加入unconfirmed的per cpu list中。只有confirmed连接，才会真正加入到会话表中
 
 	local_bh_enable();
 
