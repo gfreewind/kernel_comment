@@ -43,6 +43,13 @@ static unsigned int iptable_nat_ipv4_fn(void *priv,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
+	/*
+	可以通过下面几个命令实现NAT
+	1. MASQUERADE: iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+	2. SNAT: iptables -t nat -A POSTROUTING -o eth0 -j SNAT --to x.x.x.x
+	3. DNAT：iptables -t nat -A PREROUTING -i eth0 -j DNAT --to x.x.x.x:xx
+	4. REDIRECT: iptables -t nat -A PREROUTING -p tcp --dport 8000 -j REDIRECT --to-ports 80
+	*/
 	return nf_nat_ipv4_fn(priv, skb, state, iptable_nat_do_chain);
 }
 
@@ -50,7 +57,7 @@ static unsigned int iptable_nat_ipv4_in(void *priv,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
-	return nf_nat_ipv4_in(priv, skb, state, iptable_nat_do_chain);
+	return nf_nat_ipv4_in(priv, skb, state, iptable_nat_do_chain); //iptable_nat_do_chain是调用nat表上的规则
 }
 
 static unsigned int iptable_nat_ipv4_out(void *priv,
@@ -74,7 +81,7 @@ static const struct nf_hook_ops nf_nat_ipv4_ops[] = {
 		.pf		= NFPROTO_IPV4,
 		.nat_hook	= true,
 		.hooknum	= NF_INET_PRE_ROUTING,
-		.priority	= NF_IP_PRI_NAT_DST,
+		.priority	= NF_IP_PRI_NAT_DST, // DNAT要在路由前做
 	},
 	/* After packet filtering, change source */
 	{

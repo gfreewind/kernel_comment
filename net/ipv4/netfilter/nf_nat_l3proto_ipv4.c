@@ -253,7 +253,8 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn_nat *nat;
 	/* maniptype == SRC for postrouting. */
-	enum nf_nat_manip_type maniptype = HOOK2MANIP(state->hook);
+	/* 根据hook点，决定要修改的IP类型。prerouting和localout是dnat，postrouting和localin是snat */
+	enum nf_nat_manip_type maniptype = HOOK2MANIP(state->hook)
 
 	ct = nf_ct_get(skb, &ctinfo);
 	/* Can't track?  It's not due to stress, or conntrack would
@@ -261,15 +262,15 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 	 * packet filter it out, or implement conntrack/NAT for that
 	 * protocol. 8) --RR
 	 */
-	if (!ct)
+	if (!ct) //没有连接，嘛nat也做不了。因为nat信息需要保存在连接上
 		return NF_ACCEPT;
 
 	nat = nfct_nat(ct);
 
 	switch (ctinfo) {
-	case IP_CT_RELATED:
-	case IP_CT_RELATED_REPLY:
-		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) {
+	case IP_CT_RELATED: //新的关联连接
+	case IP_CT_RELATED_REPLY: //关联连接的回复报文
+		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) { //如果是ICMP报文，需要习惯ICMP报文的payload
 			if (!nf_nat_icmp_reply_translation(skb, ct, ctinfo,
 							   state->hook))
 				return NF_DROP;
@@ -282,26 +283,26 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 		/* Seen it before?  This can happen for loopback, retrans,
 		 * or local packets.
 		 */
-		if (!nf_nat_initialized(ct, maniptype)) {
+		if (!nf_nat_initialized(ct, maniptype)) { //没有初始化nat信息
 			unsigned int ret;
 
-			ret = do_chain(priv, skb, state, ct);
+			ret = do_chain(priv, skb, state, ct); // 执行NAT规则操作
 			if (ret != NF_ACCEPT)
 				return ret;
 
-			if (nf_nat_initialized(ct, HOOK2MANIP(state->hook)))
+			if (nf_nat_initialized(ct, HOOK2MANIP(state->hook))) //前面的NAT规则初始化了NAT信息
 				break;
 
-			ret = nf_nat_alloc_null_binding(ct, state->hook);
+			ret = nf_nat_alloc_null_binding(ct, state->hook); // 没有NAT规则初始化一个占位的NAT信息
 			if (ret != NF_ACCEPT)
 				return ret;
-		} else {
+		} else { // 连接被判定是新建连接，但是对应的NAT信息已经建立，这应该是一种异常情况
 			pr_debug("Already setup manip %s for ct %p\n",
 				 maniptype == NF_NAT_MANIP_SRC ? "SRC" : "DST",
 				 ct);
-			if (nf_nat_oif_changed(state->hook, ctinfo, nat,
+			if (nf_nat_oif_changed(state->hook, ctinfo, nat, // 检查出口nic是否发生变化
 					       state->out))
-				goto oif_changed;
+				goto oif_changed; //出口发生变化了，这个连接也用不了了，杀掉算了:)
 		}
 		break;
 
@@ -313,7 +314,7 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 			goto oif_changed;
 	}
 
-	return nf_nat_packet(ct, ctinfo, state->hook, skb);
+	return nf_nat_packet(ct, ctinfo, state->hook, skb); //根据nat信息，修改报文
 
 oif_changed:
 	nf_ct_kill_acct(ct, ctinfo, skb);

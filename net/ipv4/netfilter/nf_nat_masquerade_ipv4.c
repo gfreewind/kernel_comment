@@ -34,7 +34,7 @@ nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
 	const struct rtable *rt;
 	__be32 newsrc, nh;
 
-	WARN_ON(hooknum != NF_INET_POST_ROUTING);
+	WARN_ON(hooknum != NF_INET_POST_ROUTING); //masquerade只能用在postrouting上
 
 	ct = nf_ct_get(skb, &ctinfo);
 
@@ -49,15 +49,15 @@ nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
 
 	rt = skb_rtable(skb);
 	nh = rt_nexthop(rt, ip_hdr(skb)->daddr);
-	newsrc = inet_select_addr(out, nh, RT_SCOPE_UNIVERSE);
+	newsrc = inet_select_addr(out, nh, RT_SCOPE_UNIVERSE); //选择出口网卡的IP地址
 	if (!newsrc) {
 		pr_info("%s ate my IP address\n", out->name);
 		return NF_DROP;
 	}
 
-	nat = nf_ct_nat_ext_add(ct);
+	nat = nf_ct_nat_ext_add(ct); // 增加nat扩展
 	if (nat)
-		nat->masq_index = out->ifindex;
+		nat->masq_index = out->ifindex; // 保存出口网卡索引
 
 	/* Transfer from original range. */
 	memset(&newrange.min_addr, 0, sizeof(newrange.min_addr));

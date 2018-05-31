@@ -54,7 +54,7 @@ static int redirect_tg4_check(const struct xt_tgchk_param *par)
 {
 	const struct nf_nat_ipv4_multi_range_compat *mr = par->targinfo;
 
-	if (mr->range[0].flags & NF_NAT_RANGE_MAP_IPS) {
+	if (mr->range[0].flags & NF_NAT_RANGE_MAP_IPS) { //不支持设置IP
 		pr_debug("bad MAP_IPS.\n");
 		return -EINVAL;
 	}
@@ -71,6 +71,7 @@ redirect_tg4(struct sk_buff *skb, const struct xt_action_param *par)
 	return nf_nat_redirect_ipv4(skb, par->targinfo, xt_hooknum(par));
 }
 
+/* REDIRECT 的target定义 */
 static struct xt_target redirect_tg_reg[] __read_mostly = {
 	{
 		.name       = "REDIRECT",

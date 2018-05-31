@@ -29,11 +29,11 @@ MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
 MODULE_DESCRIPTION("Xtables: automatic-address SNAT");
 
 /* FIXME: Multiple targets. --RR */
-static int masquerade_tg_check(const struct xt_tgchk_param *par)
+static int masquerade_tg_check(const struct xt_tgchk_param *par) // 检查masquerade参数
 {
 	const struct nf_nat_ipv4_multi_range_compat *mr = par->targinfo;
 
-	if (mr->range[0].flags & NF_NAT_RANGE_MAP_IPS) {
+	if (mr->range[0].flags & NF_NAT_RANGE_MAP_IPS) { // MASQUERADE不能指定NAT IP
 		pr_debug("bad MAP_IPS.\n");
 		return -EINVAL;
 	}
@@ -45,7 +45,7 @@ static int masquerade_tg_check(const struct xt_tgchk_param *par)
 }
 
 static unsigned int
-masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
+masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par) // 执行masquerade操作
 {
 	struct nf_nat_range range;
 	const struct nf_nat_ipv4_multi_range_compat *mr;

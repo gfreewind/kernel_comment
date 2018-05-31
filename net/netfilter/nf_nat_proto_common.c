@@ -34,6 +34,7 @@ bool nf_nat_l4proto_in_range(const struct nf_conntrack_tuple *tuple,
 }
 EXPORT_SYMBOL_GPL(nf_nat_l4proto_in_range);
 
+/* 4层协议用来获取NAT后的uniq tuple，对于tcp/udp来说，得到port */
 void nf_nat_l4proto_unique_tuple(const struct nf_nat_l3proto *l3proto,
 				 struct nf_conntrack_tuple *tuple,
 				 const struct nf_nat_range *range,
@@ -45,6 +46,7 @@ void nf_nat_l4proto_unique_tuple(const struct nf_nat_l3proto *l3proto,
 	__be16 *portptr;
 	u_int16_t off;
 
+	/* 得到需要改的端口 */
 	if (maniptype == NF_NAT_MANIP_SRC)
 		portptr = &tuple->src.u.all;
 	else

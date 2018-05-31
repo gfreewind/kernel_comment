@@ -45,7 +45,7 @@ nf_nat_redirect_ipv4(struct sk_buff *skb,
 	WARN_ON(!(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED)));
 
 	/* Local packets: make them go to loopback */
-	if (hooknum == NF_INET_LOCAL_OUT) {
+	if (hooknum == NF_INET_LOCAL_OUT) { //本地发出的包，重定向到回环地址
 		newdst = htonl(0x7F000001);
 	} else {
 		struct in_device *indev;
@@ -53,6 +53,7 @@ nf_nat_redirect_ipv4(struct sk_buff *skb,
 
 		newdst = 0;
 
+		/* 得到接收网卡的地址 */
 		rcu_read_lock();
 		indev = __in_dev_get_rcu(skb->dev);
 		if (indev && indev->ifa_list) {
@@ -65,7 +66,7 @@ nf_nat_redirect_ipv4(struct sk_buff *skb,
 			return NF_DROP;
 	}
 
-	/* Transfer from original range. */
+	/* Transfer from original range. */ /* 转换成nat range */
 	memset(&newrange.min_addr, 0, sizeof(newrange.min_addr));
 	memset(&newrange.max_addr, 0, sizeof(newrange.max_addr));
 	newrange.flags	     = mr->range[0].flags | NF_NAT_RANGE_MAP_IPS;
@@ -75,7 +76,7 @@ nf_nat_redirect_ipv4(struct sk_buff *skb,
 	newrange.max_proto   = mr->range[0].max;
 
 	/* Hand modified range to generic setup. */
-	return nf_nat_setup_info(ct, &newrange, NF_NAT_MANIP_DST);
+	return nf_nat_setup_info(ct, &newrange, NF_NAT_MANIP_DST); //设置DNAT信息
 }
 EXPORT_SYMBOL_GPL(nf_nat_redirect_ipv4);
 

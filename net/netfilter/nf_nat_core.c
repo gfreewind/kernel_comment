@@ -245,7 +245,7 @@ find_best_ips_proto(const struct nf_conntrack_zone *zone,
 
 	/* Fast path: only one choice. */
 	if (nf_inet_addr_cmp(&range->min_addr, &range->max_addr)) {
-		*var_ipp = range->min_addr;
+		*var_ipp = range->min_addr; // 只有一个IP，用它就好了。
 		return;
 	}
 
@@ -323,17 +323,17 @@ get_unique_tuple(struct nf_conntrack_tuple *tuple,
 	 * manips not an issue.
 	 */
 	if (maniptype == NF_NAT_MANIP_SRC &&
-	    !(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) {
+	    !(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) { // 要改变src ip，且不是随机选择
 		/* try the original tuple first */
-		if (in_range(l3proto, l4proto, orig_tuple, range)) {
-			if (!nf_nat_used_tuple(orig_tuple, ct)) {
-				*tuple = *orig_tuple;
+		if (in_range(l3proto, l4proto, orig_tuple, range)) { // orig_tuple是否在NAT range范围中
+			if (!nf_nat_used_tuple(orig_tuple, ct)) { // 检查这个tuple的reply是否被使用了
+				*tuple = *orig_tuple; // 没有被使用，则orig_tuple就作为uniq tuple
 				goto out;
 			}
 		} else if (find_appropriate_src(net, zone, l3proto, l4proto,
-						orig_tuple, tuple, range)) {
+						orig_tuple, tuple, range)) { // 通过origin tuple查找之前的nat转换
 			pr_debug("get_unique_tuple: Found current src map\n");
-			if (!nf_nat_used_tuple(tuple, ct))
+			if (!nf_nat_used_tuple(tuple, ct)) // 检查tuple的reply是否被使用
 				goto out;
 		}
 	}
@@ -347,13 +347,13 @@ get_unique_tuple(struct nf_conntrack_tuple *tuple,
 	 */
 
 	/* Only bother mapping if it's not already in range and unique */
-	if (!(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) {
-		if (range->flags & NF_NAT_RANGE_PROTO_SPECIFIED) {
+	if (!(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) { // 不使用随机端口
+		if (range->flags & NF_NAT_RANGE_PROTO_SPECIFIED) { // 指定了端口范围
 			if (l4proto->in_range(tuple, maniptype,
 					      &range->min_proto,
 					      &range->max_proto) &&
 			    (range->min_proto.all == range->max_proto.all ||
-			     !nf_nat_used_tuple(tuple, ct)))
+			     !nf_nat_used_tuple(tuple, ct))) // 在指定范围内，且没有被使用
 				goto out;
 		} else if (!nf_nat_used_tuple(tuple, ct)) {
 			goto out;
@@ -361,7 +361,7 @@ get_unique_tuple(struct nf_conntrack_tuple *tuple,
 	}
 
 	/* Last change: get protocol to try to obtain unique tuple. */
-	l4proto->unique_tuple(l3proto, tuple, range, maniptype, ct);
+	l4proto->unique_tuple(l3proto, tuple, range, maniptype, ct); // 调用4层协议的回调，找到uniq tuple
 out:
 	rcu_read_unlock();
 }
@@ -405,16 +405,17 @@ nf_nat_setup_info(struct nf_conn *ct,
 	nf_ct_invert_tuplepr(&curr_tuple,
 			     &ct->tuplehash[IP_CT_DIR_REPLY].tuple);
 
-	get_unique_tuple(&new_tuple, &curr_tuple, range, ct, maniptype);
+	get_unique_tuple(&new_tuple, &curr_tuple, range, ct, maniptype); // 得到唯一的tuple
 
-	if (!nf_ct_tuple_equal(&new_tuple, &curr_tuple)) {
+	if (!nf_ct_tuple_equal(&new_tuple, &curr_tuple)) { //两个tuple不同，表示真的做了NAT
 		struct nf_conntrack_tuple reply;
 
 		/* Alter conntrack table so will recognize replies. */
-		nf_ct_invert_tuplepr(&reply, &new_tuple);
-		nf_conntrack_alter_reply(ct, &reply);
+		nf_ct_invert_tuplepr(&reply, &new_tuple); //根据新tuple生成reply
+		nf_conntrack_alter_reply(ct, &reply); // 改变conn的reply tuple
 
 		/* Non-atomic: we own this at the moment. */
+		/* 设置NAT标志位 */
 		if (maniptype == NF_NAT_MANIP_SRC)
 			ct->status |= IPS_SRC_NAT;
 		else
@@ -429,6 +430,7 @@ nf_nat_setup_info(struct nf_conn *ct,
 		unsigned int srchash;
 		spinlock_t *lock;
 
+		/* 将当前连接挂到snat链表上 */
 		srchash = hash_by_src(net,
 				      &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
 		lock = &nf_nat_locks[srchash % CONNTRACK_LOCKS];
@@ -496,16 +498,16 @@ unsigned int nf_nat_packet(struct nf_conn *ct,
 		statusbit ^= IPS_NAT_MASK;
 
 	/* Non-atomic: these bits don't change. */
-	if (ct->status & statusbit) {
+	if (ct->status & statusbit) { // 标志位检查，对应nf_nat_setup_info中，只有tuple真发生变化，才会设置NAT标志位
 		struct nf_conntrack_tuple target;
 
 		/* We are aiming to look like inverse of other direction. */
-		nf_ct_invert_tuplepr(&target, &ct->tuplehash[!dir].tuple);
+		nf_ct_invert_tuplepr(&target, &ct->tuplehash[!dir].tuple);//将相反反向的tuple，进行反转（invert），就是NAT后的目标
 
 		l3proto = __nf_nat_l3proto_find(target.src.l3num);
 		l4proto = __nf_nat_l4proto_find(target.src.l3num,
 						target.dst.protonum);
-		if (!l3proto->manip_pkt(skb, 0, l4proto, &target, mtype))
+		if (!l3proto->manip_pkt(skb, 0, l4proto, &target, mtype))  //调用3层协议修改报文，在这个回调中，还会再调用4层的修改报文的回调
 			return NF_DROP;
 	}
 	return NF_ACCEPT;

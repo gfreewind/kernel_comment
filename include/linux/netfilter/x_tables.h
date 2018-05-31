@@ -182,23 +182,23 @@ struct xt_match {
 struct xt_target {
 	struct list_head list;
 
-	const char name[XT_EXTENSION_MAXNAMELEN];
-	u_int8_t revision;
+	const char name[XT_EXTENSION_MAXNAMELEN]; // target名字
+	u_int8_t revision; // 版本号
 
 	/* Returns verdict. Argument order changed since 2.6.9, as this
 	   must now handle non-linear skbs, using skb_copy_bits and
 	   skb_ip_make_writable. */
 	unsigned int (*target)(struct sk_buff *skb,
-			       const struct xt_action_param *);
+			       const struct xt_action_param *); // target执行函数
 
 	/* Called when user tries to insert an entry of this type:
            hook_mask is a bitmask of hooks from which it can be
            called. */
 	/* Should return 0 on success or an error code otherwise (-Exxxx). */
-	int (*checkentry)(const struct xt_tgchk_param *);
+	int (*checkentry)(const struct xt_tgchk_param *); // 检查target 规则是否合法
 
 	/* Called when entry of this type deleted. */
-	void (*destroy)(const struct xt_tgdtor_param *);
+	void (*destroy)(const struct xt_tgdtor_param *); // target的“析构”函数
 #ifdef CONFIG_COMPAT
 	/* Called when userspace align differs from kernel space one */
 	void (*compat_from_user)(void *dst, const void *src);
@@ -207,16 +207,16 @@ struct xt_target {
 	/* Set this to THIS_MODULE if you are a module, otherwise NULL */
 	struct module *me;
 
-	const char *table;
-	unsigned int targetsize;
+	const char *table; // 用在哪个table上
+	unsigned int targetsize; // target规则的大小
 	unsigned int usersize;
 #ifdef CONFIG_COMPAT
 	unsigned int compatsize;
 #endif
-	unsigned int hooks;
+	unsigned int hooks; // netfilter的hook
 	unsigned short proto;
 
-	unsigned short family;
+	unsigned short family; // 协议族
 };
 
 /* Furniture shopping... */

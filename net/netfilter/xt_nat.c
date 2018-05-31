@@ -63,8 +63,8 @@ xt_snat_target_v0(struct sk_buff *skb, const struct xt_action_param *par)
 		 (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
 		  ctinfo == IP_CT_RELATED_REPLY)));
 
-	xt_nat_convert_range(&range, &mr->range[0]);
-	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_SRC);
+	xt_nat_convert_range(&range, &mr->range[0]);//将旧有的结构，转换为新结构
+	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_SRC);//设置SNAT信息
 }
 
 static unsigned int
@@ -79,8 +79,8 @@ xt_dnat_target_v0(struct sk_buff *skb, const struct xt_action_param *par)
 	WARN_ON(!(ct != NULL &&
 		 (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED)));
 
-	xt_nat_convert_range(&range, &mr->range[0]);
-	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
+	xt_nat_convert_range(&range, &mr->range[0]);//将旧结构，转换为新结构
+	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);//设置DNAT信息
 }
 
 static unsigned int
@@ -112,6 +112,7 @@ xt_dnat_target_v1(struct sk_buff *skb, const struct xt_action_param *par)
 	return nf_nat_setup_info(ct, range, NF_NAT_MANIP_DST);
 }
 
+/* SNAT 和 DNAT的target定义 */
 static struct xt_target xt_nat_target_reg[] __read_mostly = {
 	{
 		.name		= "SNAT",
