@@ -740,12 +740,13 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	   ICMP/TCP RST packets in other direction.  Actual packet
 	   which created connection will be IP_CT_NEW or for an
 	   expected connection, IP_CT_RELATED. */
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) //需要进行confirm的包，一定是original方向，且是第一个要发出的报文
 		return NF_ACCEPT;
 
 	zone = nf_ct_zone(ct);
 	local_bh_disable();
 
+	/* 循环是利用seqlock，保证nf_conntrack的配置没有被修改，如桶的个数。 */
 	do {
 		sequence = read_seqcount_begin(&nf_conntrack_generation);
 		/* reuse the hash saved before */
@@ -754,7 +755,7 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 		reply_hash = hash_conntrack(net,
 					   &ct->tuplehash[IP_CT_DIR_REPLY].tuple);
 
-	} while (nf_conntrack_double_lock(net, hash, reply_hash, sequence));
+	} while (nf_conntrack_double_lock(net, hash, reply_hash, sequence)); // double lock，是因为要操作两个tuple，插入两个不同的hash bucket。为了避免死锁，使用封装的double lock，保证有序上锁。
 
 	/* We're not in hash table, and we refuse to set up related
 	 * connections for unconfirmed conns.  But packet copies and
@@ -781,12 +782,12 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	/* See if there's one in the list already, including reverse:
 	   NAT could have grabbed it without realizing, since we're
 	   not in the hash.  If there is, we lost race. */
-	hlist_nulls_for_each_entry(h, n, &nf_conntrack_hash[hash], hnnode)
+	hlist_nulls_for_each_entry(h, n, &nf_conntrack_hash[hash], hnnode) // 检查original tuple是否已经被使用
 		if (nf_ct_key_equal(h, &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple,
 				    zone, net))
 			goto out;
 
-	hlist_nulls_for_each_entry(h, n, &nf_conntrack_hash[reply_hash], hnnode)
+	hlist_nulls_for_each_entry(h, n, &nf_conntrack_hash[reply_hash], hnnode) // 检查reply tuple是否已经被使用
 		if (nf_ct_key_equal(h, &ct->tuplehash[IP_CT_DIR_REPLY].tuple,
 				    zone, net))
 			goto out;
@@ -794,8 +795,8 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	/* Timer relative to confirmation time, not original
 	   setting time, otherwise we'd get timer wrap in
 	   weird delay cases. */
-	ct->timeout += nfct_time_stamp;
-	atomic_inc(&ct->ct_general.use);
+	ct->timeout += nfct_time_stamp; // 增加conn的超时时间。以前ct的超时，是一个ct一个timer，后来终于把这个timer去掉了:D
+	atomic_inc(&ct->ct_general.use); // 虽然去掉了timer，但是还是需要为超时增加一个计数
 	ct->status |= IPS_CONFIRMED;
 
 	/* set conntrack timestamp, if enabled. */
@@ -811,7 +812,7 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	 * guarantee that no other CPU can find the conntrack before the above
 	 * stores are visible.
 	 */
-	__nf_conntrack_hash_insert(ct, hash, reply_hash);
+	__nf_conntrack_hash_insert(ct, hash, reply_hash); //将连接插入会话表
 	nf_conntrack_double_unlock(hash, reply_hash);
 	local_bh_enable();
 

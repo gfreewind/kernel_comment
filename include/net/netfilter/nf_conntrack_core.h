@@ -67,7 +67,7 @@ static inline int nf_conntrack_confirm(struct sk_buff *skb)
 	int ret = NF_ACCEPT;
 
 	if (ct) {
-		if (!nf_ct_is_confirmed(ct))
+		if (!nf_ct_is_confirmed(ct)) // 之前没有confirm过，则进行confirm
 			ret = __nf_conntrack_confirm(skb);
 		if (likely(ret == NF_ACCEPT))
 			nf_ct_deliver_cached_events(ct);

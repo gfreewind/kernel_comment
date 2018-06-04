@@ -119,6 +119,7 @@ static unsigned int ipv4_helper(void *priv,
 			    ct, ctinfo);
 }
 
+/* Netfilter 的最后一步，确定数据包可以发出了，因此要confirm这个连接 */
 static unsigned int ipv4_confirm(void *priv,
 				 struct sk_buff *skb,
 				 const struct nf_hook_state *state)
