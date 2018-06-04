@@ -81,7 +81,7 @@ static const struct nf_hook_ops nf_nat_ipv4_ops[] = {
 		.pf		= NFPROTO_IPV4,
 		.nat_hook	= true,
 		.hooknum	= NF_INET_PRE_ROUTING,
-		.priority	= NF_IP_PRI_NAT_DST, // DNAT要在路由前做
+		.priority	= NF_IP_PRI_NAT_DST, // DNAT要在路由前处理
 	},
 	/* After packet filtering, change source */
 	{
@@ -89,7 +89,7 @@ static const struct nf_hook_ops nf_nat_ipv4_ops[] = {
 		.pf		= NFPROTO_IPV4,
 		.nat_hook	= true,
 		.hooknum	= NF_INET_POST_ROUTING,
-		.priority	= NF_IP_PRI_NAT_SRC,
+		.priority	= NF_IP_PRI_NAT_SRC, // SNAT要在路由后处理
 	},
 	/* Before packet filtering, change destination */
 	{

@@ -357,7 +357,7 @@ nf_nat_ipv4_out(void *priv, struct sk_buff *skb,
 #endif
 	unsigned int ret;
 
-	ret = nf_nat_ipv4_fn(priv, skb, state, do_chain);
+	ret = nf_nat_ipv4_fn(priv, skb, state, do_chain); // 进行NAT处理
 #ifdef CONFIG_XFRM
 	if (ret != NF_DROP && ret != NF_STOLEN &&
 	    !(IPCB(skb)->flags & IPSKB_XFRM_TRANSFORMED) &&
