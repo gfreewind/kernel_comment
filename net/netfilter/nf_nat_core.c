@@ -32,28 +32,28 @@
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <linux/netfilter/nf_nat.h>
 
-static spinlock_t nf_nat_locks[CONNTRACK_LOCKS];
+static spinlock_t nf_nat_locks[CONNTRACK_LOCKS];//用来保护SNAT hash表的桶链表
 
-static DEFINE_MUTEX(nf_nat_proto_mutex);
+static DEFINE_MUTEX(nf_nat_proto_mutex); //用来保护nf_nat_l3protos和nf_nat_l4protos，主要是register和unregister
 static const struct nf_nat_l3proto __rcu *nf_nat_l3protos[NFPROTO_NUMPROTO]
 						__read_mostly;
 static const struct nf_nat_l4proto __rcu **nf_nat_l4protos[NFPROTO_NUMPROTO]
 						__read_mostly;
 
-static struct hlist_head *nf_nat_bysource __read_mostly;
-static unsigned int nf_nat_htable_size __read_mostly;
-static unsigned int nf_nat_hash_rnd __read_mostly;
+static struct hlist_head *nf_nat_bysource __read_mostly;//SNAT hash表
+static unsigned int nf_nat_htable_size __read_mostly;// SNAT hash表大小
+static unsigned int nf_nat_hash_rnd __read_mostly;//SNAT hash运算时的随机值
 
 inline const struct nf_nat_l3proto *
 __nf_nat_l3proto_find(u8 family)
 {
-	return rcu_dereference(nf_nat_l3protos[family]);
+	return rcu_dereference(nf_nat_l3protos[family]);//得到3层协议
 }
 
 inline const struct nf_nat_l4proto *
 __nf_nat_l4proto_find(u8 family, u8 protonum)
 {
-	return rcu_dereference(nf_nat_l4protos[family][protonum]);
+	return rcu_dereference(nf_nat_l4protos[family][protonum]);//得到4层协议
 }
 EXPORT_SYMBOL_GPL(__nf_nat_l4proto_find);
 
@@ -120,7 +120,7 @@ EXPORT_SYMBOL(nf_xfrm_me_harder);
 
 /* We keep an extra hash for each conntrack, for fast searching. */
 static unsigned int
-hash_by_src(const struct net *n, const struct nf_conntrack_tuple *tuple)
+hash_by_src(const struct net *n, const struct nf_conntrack_tuple *tuple)//SNAT的hash算法
 {
 	unsigned int hash;
 
@@ -136,7 +136,7 @@ hash_by_src(const struct net *n, const struct nf_conntrack_tuple *tuple)
 /* Is this tuple already taken? (not by us) */
 int
 nf_nat_used_tuple(const struct nf_conntrack_tuple *tuple,
-		  const struct nf_conn *ignored_conntrack)
+		  const struct nf_conn *ignored_conntrack)//判断这个tuple是否已经被占用了，要排除ignored_conntrack
 {
 	/* Conntrack tracking doesn't keep track of outgoing tuples; only
 	 * incoming ones.  NAT means they don't have a fixed mapping,
@@ -157,7 +157,7 @@ EXPORT_SYMBOL(nf_nat_used_tuple);
 static int in_range(const struct nf_nat_l3proto *l3proto,
 		    const struct nf_nat_l4proto *l4proto,
 		    const struct nf_conntrack_tuple *tuple,
-		    const struct nf_nat_range *range)
+		    const struct nf_nat_range *range) //判断tuple是否在NAT range中
 {
 	/* If we are supposed to map IPs, then we must be in the
 	 * range specified, otherwise let this drag us onto a new src IP.
@@ -176,7 +176,7 @@ static int in_range(const struct nf_nat_l3proto *l3proto,
 
 static inline int
 same_src(const struct nf_conn *ct,
-	 const struct nf_conntrack_tuple *tuple)
+	 const struct nf_conntrack_tuple *tuple) //判断src tuple(original tuple)是否相同
 {
 	const struct nf_conntrack_tuple *t;
 
@@ -372,7 +372,7 @@ out:
 	rcu_read_unlock();
 }
 
-struct nf_conn_nat *nf_ct_nat_ext_add(struct nf_conn *ct)
+struct nf_conn_nat *nf_ct_nat_ext_add(struct nf_conn *ct) //增加NAT扩展
 {
 	struct nf_conn_nat *nat = nfct_nat(ct);
 	if (nat)
@@ -388,7 +388,7 @@ EXPORT_SYMBOL_GPL(nf_ct_nat_ext_add);
 unsigned int
 nf_nat_setup_info(struct nf_conn *ct,
 		  const struct nf_nat_range *range,
-		  enum nf_nat_manip_type maniptype)
+		  enum nf_nat_manip_type maniptype) //设置NAT信息
 {
 	struct net *net = nf_ct_net(ct);
 	struct nf_conntrack_tuple curr_tuple, new_tuple;
@@ -526,7 +526,7 @@ struct nf_nat_proto_clean {
 };
 
 /* kill conntracks with affected NAT section */
-static int nf_nat_proto_remove(struct nf_conn *i, void *data)
+static int nf_nat_proto_remove(struct nf_conn *i, void *data) //检查该conntrack是否使用了对应的3层和4层协议
 {
 	const struct nf_nat_proto_clean *clean = data;
 
@@ -537,7 +537,7 @@ static int nf_nat_proto_remove(struct nf_conn *i, void *data)
 	return i->status & IPS_NAT_MASK ? 1 : 0;
 }
 
-static void __nf_nat_cleanup_conntrack(struct nf_conn *ct)
+static void __nf_nat_cleanup_conntrack(struct nf_conn *ct)//从SNAT表中删除conntrack
 {
 	unsigned int h;
 
@@ -567,7 +567,7 @@ static int nf_nat_proto_clean(struct nf_conn *ct, void *data)
 	return 0;
 }
 
-static void nf_nat_l4proto_clean(u8 l3proto, u8 l4proto)
+static void nf_nat_l4proto_clean(u8 l3proto, u8 l4proto)//清除4层协议的相关conntrack
 {
 	struct nf_nat_proto_clean clean = {
 		.l3proto = l3proto,
@@ -577,7 +577,7 @@ static void nf_nat_l4proto_clean(u8 l3proto, u8 l4proto)
 	nf_ct_iterate_destroy(nf_nat_proto_remove, &clean);
 }
 
-static void nf_nat_l3proto_clean(u8 l3proto)
+static void nf_nat_l3proto_clean(u8 l3proto)//清除3层协议的相关conntrack
 {
 	struct nf_nat_proto_clean clean = {
 		.l3proto = l3proto,
@@ -685,12 +685,13 @@ void nf_nat_l3proto_unregister(const struct nf_nat_l3proto *l3proto)
 EXPORT_SYMBOL_GPL(nf_nat_l3proto_unregister);
 
 /* No one using conntrack by the time this called. */
-static void nf_nat_cleanup_conntrack(struct nf_conn *ct)
+static void nf_nat_cleanup_conntrack(struct nf_conn *ct) //NAT扩展的清理函数
 {
 	if (ct->status & IPS_SRC_NAT_DONE)
-		__nf_nat_cleanup_conntrack(ct);
+		__nf_nat_cleanup_conntrack(ct);//如果是做了SNAT，需要从SNAT表中清除
 }
 
+/* NAT扩展定义 */
 static struct nf_ct_ext_type nat_extend __read_mostly = {
 	.len		= sizeof(struct nf_conn_nat),
 	.align		= __alignof__(struct nf_conn_nat),
@@ -803,6 +804,7 @@ nfnetlink_parse_nat_setup(struct nf_conn *ct,
 }
 #endif
 
+/* NAT的helper，确保conntrack跟master做同样的NAT */
 static struct nf_ct_helper_expectfn follow_master_nat = {
 	.name		= "nat-follow-master",
 	.expectfn	= nf_nat_follow_master,
@@ -817,11 +819,11 @@ static int __init nf_nat_init(void)
 	if (nf_nat_htable_size < CONNTRACK_LOCKS)
 		nf_nat_htable_size = CONNTRACK_LOCKS;
 
-	nf_nat_bysource = nf_ct_alloc_hashtable(&nf_nat_htable_size, 0);
+	nf_nat_bysource = nf_ct_alloc_hashtable(&nf_nat_htable_size, 0);//申请SNAT hash表
 	if (!nf_nat_bysource)
 		return -ENOMEM;
 
-	ret = nf_ct_extend_register(&nat_extend);
+	ret = nf_ct_extend_register(&nat_extend);//注册NAT扩展
 	if (ret < 0) {
 		nf_ct_free_hashtable(nf_nat_bysource, nf_nat_htable_size);
 		pr_err("Unable to register extension\n");
@@ -831,7 +833,7 @@ static int __init nf_nat_init(void)
 	for (i = 0; i < CONNTRACK_LOCKS; i++)
 		spin_lock_init(&nf_nat_locks[i]);
 
-	nf_ct_helper_expectfn_register(&follow_master_nat);
+	nf_ct_helper_expectfn_register(&follow_master_nat);//注册NAT的helper
 
 	BUG_ON(nfnetlink_parse_nat_setup_hook != NULL);
 	RCU_INIT_POINTER(nfnetlink_parse_nat_setup_hook,
