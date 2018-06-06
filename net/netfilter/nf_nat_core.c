@@ -162,14 +162,14 @@ static int in_range(const struct nf_nat_l3proto *l3proto,
 	/* If we are supposed to map IPs, then we must be in the
 	 * range specified, otherwise let this drag us onto a new src IP.
 	 */
-	if (range->flags & NF_NAT_RANGE_MAP_IPS &&
+	if (range->flags & NF_NAT_RANGE_MAP_IPS && //指定了NAT的IP范围，则需要检查tuple是否在3层的range中（对应IP层来说，就是IP地址是不是在范围内）
 	    !l3proto->in_range(tuple, range))
 		return 0;
 
-	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED) ||
+	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED) || //如果指定4层协议范围（其实就是端口范围），就要判断是否在4层的range中。
 	    l4proto->in_range(tuple, NF_NAT_MANIP_SRC,
 			      &range->min_proto, &range->max_proto))
-		return 1;
+		return 1; // 确定在范围内
 
 	return 0;
 }
@@ -187,6 +187,7 @@ same_src(const struct nf_conn *ct,
 }
 
 /* Only called for SRC manip */
+/* 查找之前同样的源tuple（源IP，源端口，协议），找到之前的SNAT记录。 */
 static int
 find_appropriate_src(struct net *net,
 		     const struct nf_conntrack_zone *zone,
@@ -196,7 +197,7 @@ find_appropriate_src(struct net *net,
 		     struct nf_conntrack_tuple *result,
 		     const struct nf_nat_range *range)
 {
-	unsigned int h = hash_by_src(net, tuple);
+	unsigned int h = hash_by_src(net, tuple); //根据当前tuple计算hash值
 	const struct nf_conn *ct;
 
 	hlist_for_each_entry_rcu(ct, &nf_nat_bysource[h], nat_bysource) {
@@ -208,7 +209,7 @@ find_appropriate_src(struct net *net,
 				       &ct->tuplehash[IP_CT_DIR_REPLY].tuple);
 			result->dst = tuple->dst;
 
-			if (in_range(l3proto, l4proto, result, range))
+			if (in_range(l3proto, l4proto, result, range)) //判断之前的SNAT记录是否在range中
 				return 1;
 		}
 	}
@@ -235,9 +236,10 @@ find_best_ips_proto(const struct nf_conntrack_zone *zone,
 	bool full_range;
 
 	/* No IP mapping?  Do nothing. */
-	if (!(range->flags & NF_NAT_RANGE_MAP_IPS))
+	if (!(range->flags & NF_NAT_RANGE_MAP_IPS)) //没有指定NAT IP
 		return;
 
+	/* 指向要修改3层地址，源或目的 */
 	if (maniptype == NF_NAT_MANIP_SRC)
 		var_ipp = &tuple->src.u3;
 	else
@@ -249,6 +251,7 @@ find_best_ips_proto(const struct nf_conntrack_zone *zone,
 		return;
 	}
 
+	/* 确定循环次数 */
 	if (nf_ct_l3num(ct) == NFPROTO_IPV4)
 		max = sizeof(var_ipp->ip) / sizeof(u32) - 1;
 	else
@@ -266,6 +269,7 @@ find_best_ips_proto(const struct nf_conntrack_zone *zone,
 			0 : (__force u32)tuple->dst.u3.all[max] ^ zone->id);
 
 	full_range = false;
+	/* 给3层地址，循环赋值。对于IPv4来说，就一次循环，对于IPv6，需要4个循环 */
 	for (i = 0; i <= max; i++) {
 		/* If first bytes of the address are at the maximum, use the
 		 * distance. Otherwise use the full range.
@@ -281,10 +285,11 @@ find_best_ips_proto(const struct nf_conntrack_zone *zone,
 
 		var_ipp->all[i] = (__force __u32)
 			htonl(minip + reciprocal_scale(j, dist));
+		/* 通过这个判断，可以知道接下来的地址，是全范围的。因为当前的值不同，意味着后面的段肯定是全范围的 */
 		if (var_ipp->all[i] != range->max_addr.all[i])
 			full_range = true;
 
-		if (!(range->flags & NF_NAT_RANGE_PERSISTENT))
+		if (!(range->flags & NF_NAT_RANGE_PERSISTENT)) //不是persistent映射，则不同的目的地址，映射到不同的源IP
 			j ^= (__force u32)tuple->dst.u3.all[i];
 	}
 }
@@ -310,8 +315,8 @@ get_unique_tuple(struct nf_conntrack_tuple *tuple,
 	zone = nf_ct_zone(ct);
 
 	rcu_read_lock();
-	l3proto = __nf_nat_l3proto_find(orig_tuple->src.l3num);
-	l4proto = __nf_nat_l4proto_find(orig_tuple->src.l3num,
+	l3proto = __nf_nat_l3proto_find(orig_tuple->src.l3num); //得到3层协议
+	l4proto = __nf_nat_l4proto_find(orig_tuple->src.l3num, //得到4层协议
 					orig_tuple->dst.protonum);
 
 	/* 1) If this srcip/proto/src-proto-part is currently mapped,
@@ -323,24 +328,25 @@ get_unique_tuple(struct nf_conntrack_tuple *tuple,
 	 * manips not an issue.
 	 */
 	if (maniptype == NF_NAT_MANIP_SRC &&
-	    !(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) { // 要改变src ip，且不是随机选择
+	    !(range->flags & NF_NAT_RANGE_PROTO_RANDOM_ALL)) { // 进行SNAT，且没有要求随机处理
 		/* try the original tuple first */
-		if (in_range(l3proto, l4proto, orig_tuple, range)) { // orig_tuple是否在NAT range范围中
-			if (!nf_nat_used_tuple(orig_tuple, ct)) { // 检查这个tuple的reply是否被使用了
+		if (in_range(l3proto, l4proto, orig_tuple, range)) { // 检查当前tuple是否在SNAT range中
+			/* 在range中，判断tuple是否已经被使用 */
+			if (!nf_nat_used_tuple(orig_tuple, ct)) { //其实检查的是tuple的invert值
 				*tuple = *orig_tuple; // 没有被使用，则orig_tuple就作为uniq tuple
 				goto out;
 			}
 		} else if (find_appropriate_src(net, zone, l3proto, l4proto,
-						orig_tuple, tuple, range)) { // 通过origin tuple查找之前的nat转换
+						orig_tuple, tuple, range)) { //检查是否可以使用之前的SNAT值
 			pr_debug("get_unique_tuple: Found current src map\n");
-			if (!nf_nat_used_tuple(tuple, ct)) // 检查tuple的reply是否被使用
+			if (!nf_nat_used_tuple(tuple, ct)) //是否被占用
 				goto out;
 		}
 	}
 
 	/* 2) Select the least-used IP/proto combination in the given range */
 	*tuple = *orig_tuple;
-	find_best_ips_proto(zone, tuple, range, ct, maniptype);
+	find_best_ips_proto(zone, tuple, range, ct, maniptype); // 查找合适的NAT IP
 
 	/* 3) The per-protocol part of the manip is made to map into
 	 * the range to make a unique tuple.
