@@ -6693,7 +6693,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 
 	if (kvm_x86_ops->get_cpl(vcpu) != 0) {
 		ret = -KVM_EPERM;
-		goto out_error;
+		goto out;
 	}
 
 	switch (nr) {
@@ -6713,12 +6713,11 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		ret = -KVM_ENOSYS;
 		break;
 	}
-out_error:
+out:
 	if (!op_64_bit)
 		ret = (u32)ret;
 	kvm_register_write(vcpu, VCPU_REGS_RAX, ret);
 
-out:
 	++vcpu->stat.hypercalls;
 	return kvm_skip_emulated_instruction(vcpu);
 }

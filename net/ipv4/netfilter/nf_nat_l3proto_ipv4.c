@@ -254,7 +254,7 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 	struct nf_conn_nat *nat;
 	/* maniptype == SRC for postrouting. */
 	/* 根据hook点，决定要修改的IP类型。prerouting和localout是dnat，postrouting和localin是snat */
-	enum nf_nat_manip_type maniptype = HOOK2MANIP(state->hook)
+	enum nf_nat_manip_type maniptype = HOOK2MANIP(state->hook);
 
 	ct = nf_ct_get(skb, &ctinfo);
 	/* Can't track?  It's not due to stress, or conntrack would
