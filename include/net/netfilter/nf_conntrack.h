@@ -28,7 +28,7 @@
 #include <net/netfilter/nf_conntrack_tuple.h>
 
 /* per conntrack: protocol private data */
-union nf_conntrack_proto {
+union nf_conntrack_proto { //协议私有数据
 	/* insert conntrack proto private data here */
 	struct nf_ct_dccp dccp;
 	struct ip_ct_sctp sctp;
@@ -56,37 +56,37 @@ struct nf_conn {
 	 * Helper nf_ct_put() equals nf_conntrack_put() by dec refcnt,
 	 * beware nf_ct_get() is different and don't inc refcnt.
 	 */
-	struct nf_conntrack ct_general;
+	struct nf_conntrack ct_general;//引用计数
 
 	spinlock_t	lock;
-	u16		cpu;
+	u16		cpu;//当前nf_conn挂载在哪个cpu的list上（非会话表，如unconfirmed,dying）
 
 #ifdef CONFIG_NF_CONNTRACK_ZONES
-	struct nf_conntrack_zone zone;
+	struct nf_conntrack_zone zone;//nf_conn属于哪个zone
 #endif
 	/* XXX should I move this to the tail ? - Y.K */
 	/* These are my tuples; original and reply */
-	struct nf_conntrack_tuple_hash tuplehash[IP_CT_DIR_MAX];
+	struct nf_conntrack_tuple_hash tuplehash[IP_CT_DIR_MAX];//2个tuple。每个tuple表示一个方向的连接信息
 
 	/* Have we seen traffic both ways yet? (bitset) */
-	unsigned long status;
+	unsigned long status; //连接状态
 
 	/* jiffies32 when this ct is considered dead */
-	u32 timeout;
+	u32 timeout;//超时时间
 
-	possible_net_t ct_net;
+	possible_net_t ct_net;//net namespace
 
 #if IS_ENABLED(CONFIG_NF_NAT)
-	struct hlist_node	nat_bysource;
+	struct hlist_node	nat_bysource;//SNAT链表节点
 #endif
 	/* all members below initialized via memset */
-	u8 __nfct_init_offset[0];
+	u8 __nfct_init_offset[0];//占位符，如注释所言，用于memset后面的变量
 
 	/* If we were expected by an expectation, this will be it */
-	struct nf_conn *master;
+	struct nf_conn *master;//指向主连接。本连接是主连接的关联连接
 
 #if defined(CONFIG_NF_CONNTRACK_MARK)
-	u_int32_t mark;
+	u_int32_t mark;//用于设置skb的mark，路由和QoS tc使用
 #endif
 
 #ifdef CONFIG_NF_CONNTRACK_SECMARK
@@ -94,25 +94,25 @@ struct nf_conn {
 #endif
 
 	/* Extensions */
-	struct nf_ct_ext *ext;
+	struct nf_ct_ext *ext;//扩展
 
 	/* Storage reserved for other modules, must be the last member */
-	union nf_conntrack_proto proto;
+	union nf_conntrack_proto proto;//不同协议的私有变量
 };
 
 static inline struct nf_conn *
-nf_ct_tuplehash_to_ctrack(const struct nf_conntrack_tuple_hash *hash)
+nf_ct_tuplehash_to_ctrack(const struct nf_conntrack_tuple_hash *hash)//从tuplehash转换nf_conn
 {
 	return container_of(hash, struct nf_conn,
 			    tuplehash[hash->tuple.dst.dir]);
 }
 
-static inline u_int16_t nf_ct_l3num(const struct nf_conn *ct)
+static inline u_int16_t nf_ct_l3num(const struct nf_conn *ct)//得到连接的3层协议号
 {
 	return ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num;
 }
 
-static inline u_int8_t nf_ct_protonum(const struct nf_conn *ct)
+static inline u_int8_t nf_ct_protonum(const struct nf_conn *ct)//得到连接的4层协议号
 {
 	return ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum;
 }
@@ -290,7 +290,7 @@ extern unsigned int nf_conntrack_max;
 
 /* must be called with rcu read lock held */
 static inline void
-nf_conntrack_get_ht(struct hlist_nulls_head **hash, unsigned int *hsize)
+nf_conntrack_get_ht(struct hlist_nulls_head **hash, unsigned int *hsize)//得到conntrack的hash表和其大小
 {
 	struct hlist_nulls_head *hptr;
 	unsigned int sequence, hsz;
@@ -311,7 +311,7 @@ struct nf_conn *nf_ct_tmpl_alloc(struct net *net,
 void nf_ct_tmpl_free(struct nf_conn *tmpl);
 
 static inline void
-nf_ct_set(struct sk_buff *skb, struct nf_conn *ct, enum ip_conntrack_info info)
+nf_ct_set(struct sk_buff *skb, struct nf_conn *ct, enum ip_conntrack_info info)//设置skb的连接及连接信息
 {
 	skb->_nfct = (unsigned long)ct | info;
 }
@@ -323,4 +323,4 @@ nf_ct_set(struct sk_buff *skb, struct nf_conn *ct, enum ip_conntrack_info info)
 #define MODULE_ALIAS_NFCT_HELPER(helper) \
         MODULE_ALIAS("nfct-helper-" helper)
 
-#endif /* _NF_CONNTRACK_H */
+endif /* _NF_CONNTRACK_H */
