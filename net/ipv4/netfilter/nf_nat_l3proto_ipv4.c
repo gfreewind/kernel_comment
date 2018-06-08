@@ -292,8 +292,16 @@ nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
 
 			if (nf_nat_initialized(ct, HOOK2MANIP(state->hook))) //前面的NAT规则初始化了NAT信息
 				break;
-
-			ret = nf_nat_alloc_null_binding(ct, state->hook); // 没有NAT规则初始化一个占位的NAT信息
+			/*
+			没有NAT规则初始化一个占位的NAT信息，这样便于统一处理。
+			比如一个常见的场景，一个路由是NAT上网模式。
+			内网客户端发起一个连接。
+			1. PREROUTING：做DNAT，但没有规则，于是有null binding。
+			2. POSTrouting：做SNAT，有真正的SNAT规则或者MASQUERADE，会设置真正的NAT信息。
+			需要注意的是，null binding只是占位的NAT信息，所以不会有任何IP变化。
+			因此不会设置IPS_SRC_NAT和IPS_DST_NAT标志。
+			*/
+			ret = nf_nat_alloc_null_binding(ct, state->hook);
 			if (ret != NF_ACCEPT)
 				return ret;
 		} else { // 连接被判定是新建连接，但是对应的NAT信息已经建立，这应该是一种异常情况

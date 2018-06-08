@@ -413,7 +413,7 @@ nf_nat_setup_info(struct nf_conn *ct,
 
 	get_unique_tuple(&new_tuple, &curr_tuple, range, ct, maniptype); // 得到唯一的tuple
 
-	if (!nf_ct_tuple_equal(&new_tuple, &curr_tuple)) { //两个tuple不同，表示真的做了NAT
+	if (!nf_ct_tuple_equal(&new_tuple, &curr_tuple)) { //两个tuple不同，表示真的做了NAT，而不是null binding
 		struct nf_conntrack_tuple reply;
 
 		/* Alter conntrack table so will recognize replies. */
