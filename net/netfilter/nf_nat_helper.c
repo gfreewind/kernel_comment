@@ -37,40 +37,40 @@ static void mangle_contents(struct sk_buff *skb,
 {
 	unsigned char *data;
 
-	BUG_ON(skb_is_nonlinear(skb));
-	data = skb_network_header(skb) + dataoff;
+	BUG_ON(skb_is_nonlinear(skb));//sbk必须是线性的
+	data = skb_network_header(skb) + dataoff;//得到数据段的地址
 
 	/* move post-replacement */
 	memmove(data + match_offset + rep_len,
 		data + match_offset + match_len,
 		skb_tail_pointer(skb) - (skb_network_header(skb) + dataoff +
-			     match_offset + match_len));
+			     match_offset + match_len));//先把rep的插入位置腾出来
 
 	/* insert data from buffer */
-	memcpy(data + match_offset, rep_buffer, rep_len);
+	memcpy(data + match_offset, rep_buffer, rep_len);//插入rep内容
 
 	/* update skb info */
 	if (rep_len > match_len) {
 		pr_debug("nf_nat_mangle_packet: Extending packet by "
 			 "%u from %u bytes\n", rep_len - match_len, skb->len);
-		skb_put(skb, rep_len - match_len);
+		skb_put(skb, rep_len - match_len);//新内容更长，则调用skb_put追加长度
 	} else {
 		pr_debug("nf_nat_mangle_packet: Shrinking packet from "
 			 "%u from %u bytes\n", match_len - rep_len, skb->len);
-		__skb_trim(skb, skb->len + rep_len - match_len);
+		__skb_trim(skb, skb->len + rep_len - match_len);//新内容少，则用__skb_trim调整长度
 	}
 
-	if (nf_ct_l3num((struct nf_conn *)skb_nfct(skb)) == NFPROTO_IPV4) {
+	if (nf_ct_l3num((struct nf_conn *)skb_nfct(skb)) == NFPROTO_IPV4) {//修改IP首部的报文总长和校验和
 		/* fix IP hdr checksum information */
 		ip_hdr(skb)->tot_len = htons(skb->len);
 		ip_send_check(ip_hdr(skb));
 	} else
 		ipv6_hdr(skb)->payload_len =
-			htons(skb->len - sizeof(struct ipv6hdr));
+			htons(skb->len - sizeof(struct ipv6hdr)); //IPv6去掉了3层校验和，所以只需要更新报文长度就好了。
 }
 
 /* Unusual, but possible case. */
-static bool enlarge_skb(struct sk_buff *skb, unsigned int extra)
+static bool enlarge_skb(struct sk_buff *skb, unsigned int extra)//扩充skb
 {
 	if (skb->len + extra > 65535)
 		return false;
@@ -102,29 +102,29 @@ bool __nf_nat_mangle_tcp_packet(struct sk_buff *skb,
 	struct tcphdr *tcph;
 	int oldlen, datalen;
 
-	if (!skb_make_writable(skb, skb->len))
+	if (!skb_make_writable(skb, skb->len))//确保skb是可以写的
 		return false;
 
 	if (rep_len > match_len &&
 	    rep_len - match_len > skb_tailroom(skb) &&
-	    !enlarge_skb(skb, rep_len - match_len))
+	    !enlarge_skb(skb, rep_len - match_len))//如果新的内容比之前的内容要长，则需要扩充skb
 		return false;
 
 	SKB_LINEAR_ASSERT(skb);
 
-	tcph = (void *)skb->data + protoff;
+	tcph = (void *)skb->data + protoff;//得到TCP协议首部
 
 	oldlen = skb->len - protoff;
 	mangle_contents(skb, protoff + tcph->doff*4,
-			match_offset, match_len, rep_buffer, rep_len);
+			match_offset, match_len, rep_buffer, rep_len);//修改包的内容
 
-	datalen = skb->len - protoff;
+	datalen = skb->len - protoff;//得到TCP的数据段长度
 
 	l3proto = __nf_nat_l3proto_find(nf_ct_l3num(ct));
 	l3proto->csum_recalc(skb, IPPROTO_TCP, tcph, &tcph->check,
-			     datalen, oldlen);
+			     datalen, oldlen);//更新校验和
 
-	if (adjust && rep_len != match_len)
+	if (adjust && rep_len != match_len)//数据长度发生变化，需要调整seq
 		nf_ct_seqadj_set(ct, ctinfo, tcph->seq,
 				 (int)rep_len - (int)match_len);
 
@@ -156,22 +156,22 @@ nf_nat_mangle_udp_packet(struct sk_buff *skb,
 	struct udphdr *udph;
 	int datalen, oldlen;
 
-	if (!skb_make_writable(skb, skb->len))
+	if (!skb_make_writable(skb, skb->len))//确保整个儿是可写的
 		return false;
 
 	if (rep_len > match_len &&
 	    rep_len - match_len > skb_tailroom(skb) &&
-	    !enlarge_skb(skb, rep_len - match_len))
+	    !enlarge_skb(skb, rep_len - match_len))//如果新的内容比之前的内容要长，则需要扩充skb
 		return false;
 
-	udph = (void *)skb->data + protoff;
+	udph = (void *)skb->data + protoff;//获得UDP首部地址
 
 	oldlen = skb->len - protoff;
 	mangle_contents(skb, protoff + sizeof(*udph),
-			match_offset, match_len, rep_buffer, rep_len);
+			match_offset, match_len, rep_buffer, rep_len);//修改内容
 
 	/* update the length of the UDP packet */
-	datalen = skb->len - protoff;
+	datalen = skb->len - protoff;//更新UDP的数据长度
 	udph->len = htons(datalen);
 
 	/* fix udp checksum if udp checksum was previously calculated */
@@ -180,7 +180,7 @@ nf_nat_mangle_udp_packet(struct sk_buff *skb,
 
 	l3proto = __nf_nat_l3proto_find(nf_ct_l3num(ct));
 	l3proto->csum_recalc(skb, IPPROTO_UDP, udph, &udph->check,
-			     datalen, oldlen);
+			     datalen, oldlen);//重新计算校验和
 
 	return true;
 }
@@ -197,12 +197,14 @@ void nf_nat_follow_master(struct nf_conn *ct,
 	BUG_ON(ct->status & IPS_NAT_DONE_MASK);
 
 	/* Change src to where master sends to */
+	/* 设置SNAT，保证出口的IP是一致的。*/
 	range.flags = NF_NAT_RANGE_MAP_IPS;
 	range.min_addr = range.max_addr
 		= ct->master->tuplehash[!exp->dir].tuple.dst.u3;
 	nf_nat_setup_info(ct, &range, NF_NAT_MANIP_SRC);
 
 	/* For DST manip, map port here to where it's expected. */
+	/* 设置DNAT，不仅要保证IP一致，还要保证端口也是一样的 */
 	range.flags = (NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED);
 	range.min_proto = range.max_proto = exp->saved_proto;
 	range.min_addr = range.max_addr
