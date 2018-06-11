@@ -63,7 +63,7 @@ static void nf_nat_ipv4_decode_session(struct sk_buff *skb,
 #endif /* CONFIG_XFRM */
 
 static bool nf_nat_ipv4_in_range(const struct nf_conntrack_tuple *t,
-				 const struct nf_nat_range *range)
+				 const struct nf_nat_range2 *range)
 {
 	return ntohl(t->src.u3.ip) >= ntohl(range->min_addr.ip) &&
 	       ntohl(t->src.u3.ip) <= ntohl(range->max_addr.ip);
@@ -143,7 +143,7 @@ static void nf_nat_ipv4_csum_recalc(struct sk_buff *skb,
 
 #if IS_ENABLED(CONFIG_NF_CT_NETLINK)
 static int nf_nat_ipv4_nlattr_to_range(struct nlattr *tb[],
-				       struct nf_nat_range *range)
+				       struct nf_nat_range2 *range)
 {
 	if (tb[CTA_NAT_V4_MINIP]) {
 		range->min_addr.ip = nla_get_be32(tb[CTA_NAT_V4_MINIP]);
@@ -241,122 +241,49 @@ int nf_nat_icmp_reply_translation(struct sk_buff *skb,
 }
 EXPORT_SYMBOL_GPL(nf_nat_icmp_reply_translation);
 
-unsigned int
+static unsigned int
 nf_nat_ipv4_fn(void *priv, struct sk_buff *skb,
-	       const struct nf_hook_state *state,
-	       unsigned int (*do_chain)(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state,
-					struct nf_conn *ct))
+	       const struct nf_hook_state *state)
 {
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
-	struct nf_conn_nat *nat;
-	/* maniptype == SRC for postrouting. */
-	/* 根据hook点，决定要修改的IP类型。prerouting和localout是dnat，postrouting和localin是snat */
-	enum nf_nat_manip_type maniptype = HOOK2MANIP(state->hook);
 
 	ct = nf_ct_get(skb, &ctinfo);
-	/* Can't track?  It's not due to stress, or conntrack would
-	 * have dropped it.  Hence it's the user's responsibilty to
-	 * packet filter it out, or implement conntrack/NAT for that
-	 * protocol. 8) --RR
-	 */
 	if (!ct) //没有连接，嘛nat也做不了。因为nat信息需要保存在连接上
 		return NF_ACCEPT;
 
-	nat = nfct_nat(ct);
-
-	switch (ctinfo) {
-	case IP_CT_RELATED: //新的关联连接
-	case IP_CT_RELATED_REPLY: //关联连接的回复报文
-		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) { //如果是ICMP报文，需要习惯ICMP报文的payload
+	if (ctinfo == IP_CT_RELATED || ctinfo == IP_CT_RELATED_REPLY) {//新的关联连接，或者有内核产生的关联连接回复
+		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) {//如果是ICMP报文，需要习惯ICMP报文的payload
 			if (!nf_nat_icmp_reply_translation(skb, ct, ctinfo,
 							   state->hook))
 				return NF_DROP;
 			else
 				return NF_ACCEPT;
 		}
-		/* Only ICMPs can be IP_CT_IS_REPLY: */
-		/* fall through */
-	case IP_CT_NEW:
-		/* Seen it before?  This can happen for loopback, retrans,
-		 * or local packets.
-		 */
-		if (!nf_nat_initialized(ct, maniptype)) { //没有初始化nat信息
-			unsigned int ret;
-
-			ret = do_chain(priv, skb, state, ct); // 执行NAT规则操作
-			if (ret != NF_ACCEPT)
-				return ret;
-
-			if (nf_nat_initialized(ct, HOOK2MANIP(state->hook))) //前面的NAT规则初始化了NAT信息
-				break;
-			/*
-			没有NAT规则初始化一个占位的NAT信息，这样便于统一处理。
-			比如一个常见的场景，一个路由是NAT上网模式。
-			内网客户端发起一个连接。
-			1. PREROUTING：做DNAT，但没有规则，于是有null binding。
-			2. POSTrouting：做SNAT，有真正的SNAT规则或者MASQUERADE，会设置真正的NAT信息。
-			需要注意的是，null binding只是占位的NAT信息，所以不会有任何IP变化。
-			因此不会设置IPS_SRC_NAT和IPS_DST_NAT标志。
-			*/
-			ret = nf_nat_alloc_null_binding(ct, state->hook);
-			if (ret != NF_ACCEPT)
-				return ret;
-		} else { // 连接被判定是新建连接，但是对应的NAT信息已经建立，这应该是一种异常情况
-			pr_debug("Already setup manip %s for ct %p\n",
-				 maniptype == NF_NAT_MANIP_SRC ? "SRC" : "DST",
-				 ct);
-			if (nf_nat_oif_changed(state->hook, ctinfo, nat, // 检查出口nic是否发生变化
-					       state->out))
-				goto oif_changed; //出口发生变化了，这个连接也用不了了，杀掉算了:)
-		}
-		break;
-
-	default:
-		/* ESTABLISHED */
-		WARN_ON(ctinfo != IP_CT_ESTABLISHED &&
-			ctinfo != IP_CT_ESTABLISHED_REPLY);
-		if (nf_nat_oif_changed(state->hook, ctinfo, nat, state->out))
-			goto oif_changed;
 	}
 
-	return nf_nat_packet(ct, ctinfo, state->hook, skb); //根据nat信息，修改报文
-
-oif_changed:
-	nf_ct_kill_acct(ct, ctinfo, skb);
-	return NF_DROP;
+	return nf_nat_inet_fn(priv, skb, state);
 }
 EXPORT_SYMBOL_GPL(nf_nat_ipv4_fn);
 
-unsigned int
+static unsigned int
 nf_nat_ipv4_in(void *priv, struct sk_buff *skb,
-	       const struct nf_hook_state *state,
-	       unsigned int (*do_chain)(void *priv,
-					 struct sk_buff *skb,
-					 const struct nf_hook_state *state,
-					 struct nf_conn *ct))
+	       const struct nf_hook_state *state)
 {
 	unsigned int ret;
 	__be32 daddr = ip_hdr(skb)->daddr;
 
-	ret = nf_nat_ipv4_fn(priv, skb, state, do_chain);
+	ret = nf_nat_ipv4_fn(priv, skb, state);
 	if (ret != NF_DROP && ret != NF_STOLEN &&
 	    daddr != ip_hdr(skb)->daddr)
 		skb_dst_drop(skb);
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nf_nat_ipv4_in);
 
-unsigned int
+static unsigned int
 nf_nat_ipv4_out(void *priv, struct sk_buff *skb,
-		const struct nf_hook_state *state,
-		unsigned int (*do_chain)(void *priv,
-					  struct sk_buff *skb,
-					  const struct nf_hook_state *state,
-					  struct nf_conn *ct))
+		const struct nf_hook_state *state)
 {
 #ifdef CONFIG_XFRM
 	const struct nf_conn *ct;
@@ -365,7 +292,7 @@ nf_nat_ipv4_out(void *priv, struct sk_buff *skb,
 #endif
 	unsigned int ret;
 
-	ret = nf_nat_ipv4_fn(priv, skb, state, do_chain); // 进行NAT处理
+	ret = nf_nat_ipv4_fn(priv, skb, state); //进行NAT处理
 #ifdef CONFIG_XFRM
 	if (ret != NF_DROP && ret != NF_STOLEN &&
 	    !(IPCB(skb)->flags & IPSKB_XFRM_TRANSFORMED) &&
@@ -385,22 +312,17 @@ nf_nat_ipv4_out(void *priv, struct sk_buff *skb,
 #endif
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nf_nat_ipv4_out);
 
-unsigned int
+static unsigned int
 nf_nat_ipv4_local_fn(void *priv, struct sk_buff *skb,
-		     const struct nf_hook_state *state,
-		     unsigned int (*do_chain)(void *priv,
-					       struct sk_buff *skb,
-					       const struct nf_hook_state *state,
-					       struct nf_conn *ct))
+		     const struct nf_hook_state *state)
 {
 	const struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
 	unsigned int ret;
 	int err;
 
-	ret = nf_nat_ipv4_fn(priv, skb, state, do_chain);
+	ret = nf_nat_ipv4_fn(priv, skb, state);
 	if (ret != NF_DROP && ret != NF_STOLEN &&
 	    (ct = nf_ct_get(skb, &ctinfo)) != NULL) {
 		enum ip_conntrack_dir dir = CTINFO2DIR(ctinfo);
@@ -424,7 +346,49 @@ nf_nat_ipv4_local_fn(void *priv, struct sk_buff *skb,
 	}
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nf_nat_ipv4_local_fn);
+
+static const struct nf_hook_ops nf_nat_ipv4_ops[] = {
+	/* Before packet filtering, change destination */
+	{
+		.hook		= nf_nat_ipv4_in,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_PRE_ROUTING,
+		.priority	= NF_IP_PRI_NAT_DST,
+	},
+	/* After packet filtering, change source */
+	{
+		.hook		= nf_nat_ipv4_out,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_POST_ROUTING,
+		.priority	= NF_IP_PRI_NAT_SRC,
+	},
+	/* Before packet filtering, change destination */
+	{
+		.hook		= nf_nat_ipv4_local_fn,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP_PRI_NAT_DST,
+	},
+	/* After packet filtering, change source */
+	{
+		.hook		= nf_nat_ipv4_fn,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP_PRI_NAT_SRC,
+	},
+};
+
+int nf_nat_l3proto_ipv4_register_fn(struct net *net, const struct nf_hook_ops *ops)
+{
+	return nf_nat_register_fn(net, ops, nf_nat_ipv4_ops, ARRAY_SIZE(nf_nat_ipv4_ops));
+}
+EXPORT_SYMBOL_GPL(nf_nat_l3proto_ipv4_register_fn);
+
+void nf_nat_l3proto_ipv4_unregister_fn(struct net *net, const struct nf_hook_ops *ops)
+{
+	nf_nat_unregister_fn(net, ops, ARRAY_SIZE(nf_nat_ipv4_ops));
+}
+EXPORT_SYMBOL_GPL(nf_nat_l3proto_ipv4_unregister_fn);
 
 static int __init nf_nat_l3proto_ipv4_init(void)
 {

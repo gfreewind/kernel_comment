@@ -323,4 +323,4 @@ nf_ct_set(struct sk_buff *skb, struct nf_conn *ct, enum ip_conntrack_info info)/
 #define MODULE_ALIAS_NFCT_HELPER(helper) \
         MODULE_ALIAS("nfct-helper-" helper)
 
-endif /* _NF_CONNTRACK_H */
+#endif /* _NF_CONNTRACK_H */

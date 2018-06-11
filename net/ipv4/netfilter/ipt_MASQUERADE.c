@@ -47,7 +47,7 @@ static int masquerade_tg_check(const struct xt_tgchk_param *par) // 检查masque
 static unsigned int
 masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par) // 执行masquerade操作
 {
-	struct nf_nat_range range;
+	struct nf_nat_range2 range;
 	const struct nf_nat_ipv4_multi_range_compat *mr;
 
 	mr = par->targinfo;

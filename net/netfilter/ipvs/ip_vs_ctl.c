@@ -821,6 +821,10 @@ __ip_vs_update_dest(struct ip_vs_service *svc, struct ip_vs_dest *dest,
 	if (add && udest->af != svc->af)
 		ipvs->mixed_address_family_dests++;
 
+	/* keep the last_weight with latest non-0 weight */
+	if (add || udest->weight != 0)
+		atomic_set(&dest->last_weight, udest->weight);
+
 	/* set the weight and the flags */
 	atomic_set(&dest->weight, udest->weight);
 	conn_flags = udest->conn_flags & IP_VS_CONN_F_DEST_MASK;
@@ -2109,19 +2113,6 @@ static const struct seq_operations ip_vs_info_seq_ops = {
 	.show  = ip_vs_info_seq_show,
 };
 
-static int ip_vs_info_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &ip_vs_info_seq_ops,
-			sizeof(struct ip_vs_iter));
-}
-
-static const struct file_operations ip_vs_info_fops = {
-	.open    = ip_vs_info_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = seq_release_net,
-};
-
 static int ip_vs_stats_show(struct seq_file *seq, void *v)
 {
 	struct net *net = seq_file_single_net(seq);
@@ -2153,18 +2144,6 @@ static int ip_vs_stats_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
-
-static int ip_vs_stats_seq_open(struct inode *inode, struct file *file)
-{
-	return single_open_net(inode, file, ip_vs_stats_show);
-}
-
-static const struct file_operations ip_vs_stats_fops = {
-	.open = ip_vs_stats_seq_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release_net,
-};
 
 static int ip_vs_stats_percpu_show(struct seq_file *seq, void *v)
 {
@@ -2221,18 +2200,6 @@ static int ip_vs_stats_percpu_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
-
-static int ip_vs_stats_percpu_seq_open(struct inode *inode, struct file *file)
-{
-	return single_open_net(inode, file, ip_vs_stats_percpu_show);
-}
-
-static const struct file_operations ip_vs_stats_percpu_fops = {
-	.open = ip_vs_stats_percpu_seq_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release_net,
-};
 #endif
 
 /*
@@ -4039,10 +4006,12 @@ int __net_init ip_vs_control_net_init(struct netns_ipvs *ipvs)
 
 	spin_lock_init(&ipvs->tot_stats.lock);
 
-	proc_create("ip_vs", 0, ipvs->net->proc_net, &ip_vs_info_fops);
-	proc_create("ip_vs_stats", 0, ipvs->net->proc_net, &ip_vs_stats_fops);
-	proc_create("ip_vs_stats_percpu", 0, ipvs->net->proc_net,
-		    &ip_vs_stats_percpu_fops);
+	proc_create_net("ip_vs", 0, ipvs->net->proc_net, &ip_vs_info_seq_ops,
+			sizeof(struct ip_vs_iter));
+	proc_create_net_single("ip_vs_stats", 0, ipvs->net->proc_net,
+			ip_vs_stats_show, NULL);
+	proc_create_net_single("ip_vs_stats_percpu", 0, ipvs->net->proc_net,
+			ip_vs_stats_percpu_show, NULL);
 
 	if (ip_vs_control_net_init_sysctl(ipvs))
 		goto err;

@@ -32,16 +32,8 @@ static const struct xt_table nf_nat_ipv4_table = {
 };
 
 static unsigned int iptable_nat_do_chain(void *priv,
-					 struct sk_buff *skb,
-					 const struct nf_hook_state *state,
-					 struct nf_conn *ct)
-{
-	return ipt_do_table(skb, state, state->net->ipv4.nat_table);
-}
-
-static unsigned int iptable_nat_ipv4_fn(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
+                                         struct sk_buff *skb,
+                                         const struct nf_hook_state *state)
 {
 	/*
 	可以通过下面几个命令实现NAT
@@ -50,64 +42,61 @@ static unsigned int iptable_nat_ipv4_fn(void *priv,
 	3. DNAT：iptables -t nat -A PREROUTING -i eth0 -j DNAT --to x.x.x.x:xx
 	4. REDIRECT: iptables -t nat -A PREROUTING -p tcp --dport 8000 -j REDIRECT --to-ports 80
 	*/
-	return nf_nat_ipv4_fn(priv, skb, state, iptable_nat_do_chain);
+        return ipt_do_table(skb, state, state->net->ipv4.nat_table);
 }
 
-static unsigned int iptable_nat_ipv4_in(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
-{
-	return nf_nat_ipv4_in(priv, skb, state, iptable_nat_do_chain); //iptable_nat_do_chain是调用nat表上的规则
-}
-
-static unsigned int iptable_nat_ipv4_out(void *priv,
-					 struct sk_buff *skb,
-					 const struct nf_hook_state *state)
-{
-	return nf_nat_ipv4_out(priv, skb, state, iptable_nat_do_chain);
-}
-
-static unsigned int iptable_nat_ipv4_local_fn(void *priv,
-					      struct sk_buff *skb,
-					      const struct nf_hook_state *state)
-{
-	return nf_nat_ipv4_local_fn(priv, skb, state, iptable_nat_do_chain);
-}
 
 static const struct nf_hook_ops nf_nat_ipv4_ops[] = {
-	/* Before packet filtering, change destination */
 	{
-		.hook		= iptable_nat_ipv4_in,
+		.hook		= iptable_nat_do_chain,
 		.pf		= NFPROTO_IPV4,
-		.nat_hook	= true,
 		.hooknum	= NF_INET_PRE_ROUTING,
 		.priority	= NF_IP_PRI_NAT_DST, // DNAT要在路由前处理
 	},
-	/* After packet filtering, change source */
 	{
-		.hook		= iptable_nat_ipv4_out,
+		.hook		= iptable_nat_do_chain,
 		.pf		= NFPROTO_IPV4,
-		.nat_hook	= true,
 		.hooknum	= NF_INET_POST_ROUTING,
 		.priority	= NF_IP_PRI_NAT_SRC, // SNAT要在路由后处理
 	},
-	/* Before packet filtering, change destination */
 	{
-		.hook		= iptable_nat_ipv4_local_fn,
+		.hook		= iptable_nat_do_chain,
 		.pf		= NFPROTO_IPV4,
-		.nat_hook	= true,
 		.hooknum	= NF_INET_LOCAL_OUT,
 		.priority	= NF_IP_PRI_NAT_DST,
 	},
-	/* After packet filtering, change source */
 	{
-		.hook		= iptable_nat_ipv4_fn,
+		.hook		= iptable_nat_do_chain,
 		.pf		= NFPROTO_IPV4,
-		.nat_hook	= true,
 		.hooknum	= NF_INET_LOCAL_IN,
 		.priority	= NF_IP_PRI_NAT_SRC,
 	},
 };
+
+static int ipt_nat_register_lookups(struct net *net)
+{
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(nf_nat_ipv4_ops); i++) {
+		ret = nf_nat_l3proto_ipv4_register_fn(net, &nf_nat_ipv4_ops[i]);
+		if (ret) {
+			while (i)
+				nf_nat_l3proto_ipv4_unregister_fn(net, &nf_nat_ipv4_ops[--i]);
+
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static void ipt_nat_unregister_lookups(struct net *net)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(nf_nat_ipv4_ops); i++)
+		nf_nat_l3proto_ipv4_unregister_fn(net, &nf_nat_ipv4_ops[i]);
+}
 
 static int __net_init iptable_nat_table_init(struct net *net)
 {
@@ -121,7 +110,18 @@ static int __net_init iptable_nat_table_init(struct net *net)
 	if (repl == NULL)
 		return -ENOMEM;
 	ret = ipt_register_table(net, &nf_nat_ipv4_table, repl,
-				 nf_nat_ipv4_ops, &net->ipv4.nat_table);
+				 NULL, &net->ipv4.nat_table);
+	if (ret < 0) {
+		kfree(repl);
+		return ret;
+	}
+
+	ret = ipt_nat_register_lookups(net);
+	if (ret < 0) {
+		ipt_unregister_table(net, net->ipv4.nat_table, NULL);
+		net->ipv4.nat_table = NULL;
+	}
+
 	kfree(repl);
 	return ret;
 }
@@ -130,7 +130,8 @@ static void __net_exit iptable_nat_net_exit(struct net *net)
 {
 	if (!net->ipv4.nat_table)
 		return;
-	ipt_unregister_table(net, net->ipv4.nat_table, nf_nat_ipv4_ops);
+	ipt_nat_unregister_lookups(net);
+	ipt_unregister_table(net, net->ipv4.nat_table, NULL);
 	net->ipv4.nat_table = NULL;
 }
 
