@@ -31,12 +31,12 @@
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_log.h>
 
-static DEFINE_MUTEX(nf_ct_helper_mutex);
-struct hlist_head *nf_ct_helper_hash __read_mostly;
+static DEFINE_MUTEX(nf_ct_helper_mutex);//用于保护下面的helper hash表
+struct hlist_head *nf_ct_helper_hash __read_mostly;//helper的hash表
 EXPORT_SYMBOL_GPL(nf_ct_helper_hash);
 unsigned int nf_ct_helper_hsize __read_mostly;
 EXPORT_SYMBOL_GPL(nf_ct_helper_hsize);
-static unsigned int nf_ct_helper_count __read_mostly;
+static unsigned int nf_ct_helper_count __read_mostly;//已注册的helper个数
 
 static bool nf_ct_auto_assign_helper __read_mostly = false;
 module_param_named(nf_conntrack_helper, nf_ct_auto_assign_helper, bool, 0644);
@@ -113,7 +113,7 @@ static unsigned int helper_hash(const struct nf_conntrack_tuple *tuple)
 }
 
 static struct nf_conntrack_helper *
-__nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)
+__nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)//根据tuple查找helper
 {
 	struct nf_conntrack_helper *helper;
 	struct nf_conntrack_tuple_mask mask = { .src.u.all = htons(0xFFFF) };
@@ -131,7 +131,7 @@ __nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)
 }
 
 struct nf_conntrack_helper *
-__nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum)
+__nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum) //根据helper的名字，3层协议和4层协议查找helper
 {
 	struct nf_conntrack_helper *h;
 	unsigned int i;
@@ -154,7 +154,7 @@ __nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum)
 EXPORT_SYMBOL_GPL(__nf_conntrack_helper_find);
 
 struct nf_conntrack_helper *
-nf_conntrack_helper_try_module_get(const char *name, u16 l3num, u8 protonum)
+nf_conntrack_helper_try_module_get(const char *name, u16 l3num, u8 protonum)//这个函数名已经说明是干嘛的了
 {
 	struct nf_conntrack_helper *h;
 
@@ -163,7 +163,7 @@ nf_conntrack_helper_try_module_get(const char *name, u16 l3num, u8 protonum)
 	h = __nf_conntrack_helper_find(name, l3num, protonum);
 #ifdef CONFIG_MODULES
 	if (h == NULL) {
-		rcu_read_unlock();
+		rcu_read_unlock();//这里要执行rcu_read_unlock，是因为request_module可能sleep
 		if (request_module("nfct-helper-%s", name) == 0) {
 			rcu_read_lock();
 			h = __nf_conntrack_helper_find(name, l3num, protonum);
@@ -194,7 +194,7 @@ EXPORT_SYMBOL_GPL(nf_conntrack_helper_put);
 
 struct nf_conn_help *
 nf_ct_helper_ext_add(struct nf_conn *ct,
-		     struct nf_conntrack_helper *helper, gfp_t gfp)
+		     struct nf_conntrack_helper *helper, gfp_t gfp)//为conntrack增加helper扩展
 {
 	struct nf_conn_help *help;
 
@@ -208,7 +208,7 @@ nf_ct_helper_ext_add(struct nf_conn *ct,
 EXPORT_SYMBOL_GPL(nf_ct_helper_ext_add);
 
 static struct nf_conntrack_helper *
-nf_ct_lookup_helper(struct nf_conn *ct, struct net *net)
+nf_ct_lookup_helper(struct nf_conn *ct, struct net *net)//根据reply tuple查找
 {
 	if (!net->ct.sysctl_auto_assign_helper) {
 		if (net->ct.auto_assign_helper_warned)
@@ -226,7 +226,7 @@ nf_ct_lookup_helper(struct nf_conn *ct, struct net *net)
 	return __nf_ct_helper_find(&ct->tuplehash[IP_CT_DIR_REPLY].tuple);
 }
 
-
+/* 尝试给连接设置helper */
 int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 			      gfp_t flags)
 {
@@ -240,21 +240,21 @@ int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 	 * making consistent helper configurations, skip this automatic
 	 * re-lookup, otherwise we'll lose the helper.
 	 */
-	if (test_bit(IPS_HELPER_BIT, &ct->status))
+	if (test_bit(IPS_HELPER_BIT, &ct->status))//是否使用CT target设置了helper
 		return 0;
 
-	if (tmpl != NULL) {
+	if (tmpl != NULL) {//从tmpl连接获取helper
 		help = nfct_help(tmpl);
 		if (help != NULL) {
 			helper = help->helper;
-			set_bit(IPS_HELPER_BIT, &ct->status);
+			set_bit(IPS_HELPER_BIT, &ct->status);//设置IPS_HELPER_BIT标志位。只有CT target，才会有tmpl
 		}
 	}
 
 	help = nfct_help(ct);
 
-	if (helper == NULL) {
-		helper = nf_ct_lookup_helper(ct, net);
+	if (helper == NULL) {//没有tmpl或者tmpl没有helper
+		helper = nf_ct_lookup_helper(ct, net);//根据连接，查找helper
 		if (helper == NULL) {
 			if (help)
 				RCU_INIT_POINTER(help->helper, NULL);
@@ -263,7 +263,7 @@ int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 	}
 
 	if (help == NULL) {
-		help = nf_ct_helper_ext_add(ct, helper, flags);
+		help = nf_ct_helper_ext_add(ct, helper, flags);//如果没有help扩展，先为conntrack增加helper扩展
 		if (help == NULL)
 			return -ENOMEM;
 	} else {
@@ -278,14 +278,14 @@ int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 		}
 	}
 
-	rcu_assign_pointer(help->helper, helper);
+	rcu_assign_pointer(help->helper, helper);//给conntrack设置helper
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(__nf_ct_try_assign_helper);
 
 /* appropriate ct lock protecting must be taken by caller */
-static int unhelp(struct nf_conn *ct, void *me)
+static int unhelp(struct nf_conn *ct, void *me)//重置conntrack的helper
 {
 	struct nf_conn_help *help = nfct_help(ct);
 
@@ -298,7 +298,7 @@ static int unhelp(struct nf_conn *ct, void *me)
 	return 0;
 }
 
-void nf_ct_helper_destroy(struct nf_conn *ct)
+void nf_ct_helper_destroy(struct nf_conn *ct)//连接conntrack销毁helper
 {
 	struct nf_conn_help *help = nfct_help(ct);
 	struct nf_conntrack_helper *helper;
@@ -314,7 +314,7 @@ void nf_ct_helper_destroy(struct nf_conn *ct)
 
 static LIST_HEAD(nf_ct_helper_expectfn_list);
 
-void nf_ct_helper_expectfn_register(struct nf_ct_helper_expectfn *n)
+void nf_ct_helper_expectfn_register(struct nf_ct_helper_expectfn *n)//注册helper expectfn
 {
 	spin_lock_bh(&nf_conntrack_expect_lock);
 	list_add_rcu(&n->head, &nf_ct_helper_expectfn_list);
@@ -398,6 +398,7 @@ int nf_conntrack_helper_register(struct nf_conntrack_helper *me)
 	struct nf_conntrack_helper *cur;
 	int ret = 0, i;
 
+	/*  */
 	BUG_ON(me->expect_policy == NULL);
 	BUG_ON(me->expect_class_max >= NF_CT_MAX_EXPECT_CLASSES);
 	BUG_ON(strlen(me->name) > NF_CT_HELPER_NAME_LEN - 1);
@@ -406,13 +407,14 @@ int nf_conntrack_helper_register(struct nf_conntrack_helper *me)
 		return -EINVAL;
 
 	mutex_lock(&nf_ct_helper_mutex);
+	/* 检查helper是否已经存在 */
 	for (i = 0; i < nf_ct_helper_hsize; i++) {
 		hlist_for_each_entry(cur, &nf_ct_helper_hash[i], hnode) {
-			if (!strcmp(cur->name, me->name) &&
+			if (!strcmp(cur->name, me->name) && //名字相同
 			    (cur->tuple.src.l3num == NFPROTO_UNSPEC ||
-			     cur->tuple.src.l3num == me->tuple.src.l3num) &&
-			    cur->tuple.dst.protonum == me->tuple.dst.protonum) {
-				ret = -EEXIST;
+			     cur->tuple.src.l3num == me->tuple.src.l3num) && //3层协议相同或者未指定3层协议
+			    cur->tuple.dst.protonum == me->tuple.dst.protonum) {//4层协议相同
+				ret = -EEXIST;//判断为已存在
 				goto out;
 			}
 		}
@@ -422,14 +424,14 @@ int nf_conntrack_helper_register(struct nf_conntrack_helper *me)
 	if (!(me->flags & NF_CT_HELPER_F_USERSPACE)) {
 		hlist_for_each_entry(cur, &nf_ct_helper_hash[h], hnode) {
 			if (nf_ct_tuple_src_mask_cmp(&cur->tuple, &me->tuple,
-						     &mask)) {
+						     &mask)) {//检查tuple是否有冲突的
 				ret = -EEXIST;
 				goto out;
 			}
 		}
 	}
 	refcount_set(&me->refcnt, 1);
-	hlist_add_head_rcu(&me->hnode, &nf_ct_helper_hash[h]);
+	hlist_add_head_rcu(&me->hnode, &nf_ct_helper_hash[h]);//挂载到helper hash表上
 	nf_ct_helper_count++;
 out:
 	mutex_unlock(&nf_ct_helper_mutex);
@@ -461,13 +463,17 @@ void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 	/* Make sure every nothing is still using the helper unless its a
 	 * connection in the hash.
 	 */
-	synchronize_rcu();
+	synchronize_rcu(); //保证当前正在使用这个helper的数据包，已经结束。
 
-	nf_ct_expect_iterate_destroy(expect_iter_me, NULL);
-	nf_ct_iterate_destroy(unhelp, me);
+	nf_ct_expect_iterate_destroy(expect_iter_me, NULL);//将引用当前helper的expect全部删除
+	nf_ct_iterate_destroy(unhelp, me);//重置会话表中连接对helper的引用。这里有一个Bug，我已经提交patch
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_unregister);
 
+/*
+参数真多。。。MD，这个函数好像是我加的。
+虽然参数多到丑爆了，但是也比以前重复的代码强吧。。。。
+*/
 void nf_ct_helper_init(struct nf_conntrack_helper *helper,
 		       u16 l3num, u16 protonum, const char *name,
 		       u16 default_port, u16 spec_port, u32 id,
@@ -496,6 +502,7 @@ void nf_ct_helper_init(struct nf_conntrack_helper *helper,
 }
 EXPORT_SYMBOL_GPL(nf_ct_helper_init);
 
+/* 批量注册 */
 int nf_conntrack_helpers_register(struct nf_conntrack_helper *helper,
 				  unsigned int n)
 {
@@ -524,6 +531,7 @@ void nf_conntrack_helpers_unregister(struct nf_conntrack_helper *helper,
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helpers_unregister);
 
+/* helper扩展 */
 static const struct nf_ct_ext_type helper_extend = {
 	.len	= sizeof(struct nf_conn_help),
 	.align	= __alignof__(struct nf_conn_help),
@@ -547,11 +555,11 @@ int nf_conntrack_helper_init(void)
 	int ret;
 	nf_ct_helper_hsize = 1; /* gets rounded up to use one page */
 	nf_ct_helper_hash =
-		nf_ct_alloc_hashtable(&nf_ct_helper_hsize, 0);
+		nf_ct_alloc_hashtable(&nf_ct_helper_hsize, 0);//申请helper的hash表
 	if (!nf_ct_helper_hash)
 		return -ENOMEM;
 
-	ret = nf_ct_extend_register(&helper_extend);
+	ret = nf_ct_extend_register(&helper_extend);//注册helper扩展
 	if (ret < 0) {
 		pr_err("nf_ct_helper: Unable to register helper extension.\n");
 		goto out_extend;
