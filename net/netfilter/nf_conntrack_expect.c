@@ -33,16 +33,16 @@
 #include <net/netfilter/nf_conntrack_tuple.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 
-unsigned int nf_ct_expect_hsize __read_mostly;
+unsigned int nf_ct_expect_hsize __read_mostly;//expect hash表的大小
 EXPORT_SYMBOL_GPL(nf_ct_expect_hsize);
 
-struct hlist_head *nf_ct_expect_hash __read_mostly;
+struct hlist_head *nf_ct_expect_hash __read_mostly;//expect hash表
 EXPORT_SYMBOL_GPL(nf_ct_expect_hash);
 
-unsigned int nf_ct_expect_max __read_mostly;
+unsigned int nf_ct_expect_max __read_mostly;//expect的最大个数
 
-static struct kmem_cache *nf_ct_expect_cachep __read_mostly;
-static unsigned int nf_ct_expect_hashrnd __read_mostly;
+static struct kmem_cache *nf_ct_expect_cachep __read_mostly;//expect的slab
+static unsigned int nf_ct_expect_hashrnd __read_mostly;//expect hash使用的随机数
 
 /* nf_conntrack_expect helper functions */
 void nf_ct_unlink_expect_report(struct nf_conntrack_expect *exp,
@@ -54,27 +54,27 @@ void nf_ct_unlink_expect_report(struct nf_conntrack_expect *exp,
 	WARN_ON(!master_help);
 	WARN_ON(timer_pending(&exp->timeout));
 
-	hlist_del_rcu(&exp->hnode);
+	hlist_del_rcu(&exp->hnode);//从expect的hash表中删除
 	net->ct.expect_count--;
 
-	hlist_del_rcu(&exp->lnode);
+	hlist_del_rcu(&exp->lnode);//从master conntrack的expect链表上删除
 	master_help->expecting[exp->class]--;
 
 	nf_ct_expect_event_report(IPEXP_DESTROY, exp, portid, report);
-	nf_ct_expect_put(exp);
+	nf_ct_expect_put(exp);//当expect加入到上面的表中时，会增加引用计数，这里需要释放
 
 	NF_CT_STAT_INC(net, expect_delete);
 }
 EXPORT_SYMBOL_GPL(nf_ct_unlink_expect_report);
 
-static void nf_ct_expectation_timed_out(struct timer_list *t)
+static void nf_ct_expectation_timed_out(struct timer_list *t)//expect的超时操作
 {
 	struct nf_conntrack_expect *exp = from_timer(exp, t, timeout);
 
 	spin_lock_bh(&nf_conntrack_expect_lock);
-	nf_ct_unlink_expect(exp);
+	nf_ct_unlink_expect(exp);//从表中删除当前expect节点
 	spin_unlock_bh(&nf_conntrack_expect_lock);
-	nf_ct_expect_put(exp);
+	nf_ct_expect_put(exp);//启用expect的timer时，会增加引用计数，这里需要释放
 }
 
 static unsigned int nf_ct_expect_dst_hash(const struct net *n, const struct nf_conntrack_tuple *tuple)
@@ -106,6 +106,12 @@ nf_ct_exp_equal(const struct nf_conntrack_tuple *tuple,
 bool nf_ct_remove_expect(struct nf_conntrack_expect *exp)
 {
 	if (del_timer(&exp->timeout)) {
+		/*
+		当del_timer返回真时，表示该exp的timer并没有执行。
+		因此，调用nf_ct_unlink_expect执行从表中删除exp的动作。
+		因为timer还有一个exp的引用计数，这里timer被删除了，因此还需要
+		调用nf_ct_expect_put释放引用计数。
+		*/
 		nf_ct_unlink_expect(exp);
 		nf_ct_expect_put(exp);
 		return true;
@@ -117,7 +123,7 @@ EXPORT_SYMBOL_GPL(nf_ct_remove_expect);
 struct nf_conntrack_expect *
 __nf_ct_expect_find(struct net *net,
 		    const struct nf_conntrack_zone *zone,
-		    const struct nf_conntrack_tuple *tuple)
+		    const struct nf_conntrack_tuple *tuple)//切记需要rcu lock保护，且只能在rcu lock期间使用
 {
 	struct nf_conntrack_expect *i;
 	unsigned int h;
@@ -138,13 +144,13 @@ EXPORT_SYMBOL_GPL(__nf_ct_expect_find);
 struct nf_conntrack_expect *
 nf_ct_expect_find_get(struct net *net,
 		      const struct nf_conntrack_zone *zone,
-		      const struct nf_conntrack_tuple *tuple)
+		      const struct nf_conntrack_tuple *tuple)//自带rcu的查找函数
 {
 	struct nf_conntrack_expect *i;
 
 	rcu_read_lock();
 	i = __nf_ct_expect_find(net, zone, tuple);
-	if (i && !refcount_inc_not_zero(&i->use))
+	if (i && !refcount_inc_not_zero(&i->use))//因为rcu只能保证lock期间是安全的。需要返回exp时，必须要增加引用计数
 		i = NULL;
 	rcu_read_unlock();
 
@@ -154,6 +160,12 @@ EXPORT_SYMBOL_GPL(nf_ct_expect_find_get);
 
 /* If an expectation for this connection is found, it gets delete from
  * global list then returned. */
+/*
+怎么这么多expect_find? 前面的find，只是为了查找expect，这个是conntrack来查找exp。
+查找的逻辑与上面的find是不同的。如需要检查expect标志位，是否活跃。
+命中expect后，还需要把expect从表中删除等。
+可以这么说，这个函数是真正用于dataplane的。
+*/
 struct nf_conntrack_expect *
 nf_ct_find_expectation(struct net *net,
 		       const struct nf_conntrack_zone *zone,
@@ -167,21 +179,21 @@ nf_ct_find_expectation(struct net *net,
 
 	h = nf_ct_expect_dst_hash(net, tuple);
 	hlist_for_each_entry(i, &nf_ct_expect_hash[h], hnode) {
-		if (!(i->flags & NF_CT_EXPECT_INACTIVE) &&
-		    nf_ct_exp_equal(tuple, i, zone, net)) {
+		if (!(i->flags & NF_CT_EXPECT_INACTIVE) &&//需要保证expect是活跃的
+		    nf_ct_exp_equal(tuple, i, zone, net)) {//检查是否匹配expect
 			exp = i;
 			break;
 		}
 	}
 	if (!exp)
-		return NULL;
+		return NULL;//未找到
 
 	/* If master is not in hash table yet (ie. packet hasn't left
 	   this machine yet), how can other end know about expected?
 	   Hence these are not the droids you are looking for (if
 	   master ct never got confirmed, we'd hold a reference to it
 	   and weird things would happen to future packets). */
-	if (!nf_ct_is_confirmed(exp->master))
+	if (!nf_ct_is_confirmed(exp->master))//如果主连接都没有confirm，那还玩啥？
 		return NULL;
 
 	/* Avoid race with other CPUs, that for exp->master ct, is
@@ -193,35 +205,40 @@ nf_ct_find_expectation(struct net *net,
 	 * can be sure the ct cannot disappear underneath.
 	 */
 	if (unlikely(nf_ct_is_dying(exp->master) ||
-		     !atomic_inc_not_zero(&exp->master->ct_general.use)))
+		     !atomic_inc_not_zero(&exp->master->ct_general.use)))//检查主连接不能很快就挂了:)
 		return NULL;
 
 	if (exp->flags & NF_CT_EXPECT_PERMANENT) {
+		/*
+		永久的expect，增加计数返回即可。
+		这里的“永久”，并不代表expect一直存在，而是说在timeout期间一直存在。
+		没有这个标志位的expect，即使没有过期，匹配后，也会被删除。
+		*/
 		refcount_inc(&exp->use);
 		return exp;
-	} else if (del_timer(&exp->timeout)) {
-		nf_ct_unlink_expect(exp);
+	} else if (del_timer(&exp->timeout)) {//非永久expect，删除其timer
+		nf_ct_unlink_expect(exp);//删除timer成功，从expect表中去掉这个exp
 		return exp;
 	}
 	/* Undo exp->master refcnt increase, if del_timer() failed */
-	nf_ct_put(exp->master);
+	nf_ct_put(exp->master);//删除timer失败，说明timer已经运行了，即exp过期了。
 
 	return NULL;
 }
 
 /* delete all expectations for this conntrack */
-void nf_ct_remove_expectations(struct nf_conn *ct)
+void nf_ct_remove_expectations(struct nf_conn *ct)//删除这个连接的所有expect
 {
 	struct nf_conn_help *help = nfct_help(ct);
 	struct nf_conntrack_expect *exp;
 	struct hlist_node *next;
 
 	/* Optimization: most connection never expect any others. */
-	if (!help)
+	if (!help)//没有help扩展，直接返回
 		return;
 
 	spin_lock_bh(&nf_conntrack_expect_lock);
-	hlist_for_each_entry_safe(exp, next, &help->expectations, lnode) {
+	hlist_for_each_entry_safe(exp, next, &help->expectations, lnode) {//遍历help的所有expect，并删除
 		nf_ct_remove_expect(exp);
 	}
 	spin_unlock_bh(&nf_conntrack_expect_lock);
@@ -230,7 +247,7 @@ EXPORT_SYMBOL_GPL(nf_ct_remove_expectations);
 
 /* Would two expected things clash? */
 static inline int expect_clash(const struct nf_conntrack_expect *a,
-			       const struct nf_conntrack_expect *b)
+			       const struct nf_conntrack_expect *b)//判断两个expect是否冲突
 {
 	/* Part covered by intersection of masks must be unequal,
 	   otherwise they clash */
@@ -250,7 +267,7 @@ static inline int expect_clash(const struct nf_conntrack_expect *a,
 }
 
 static inline int expect_matches(const struct nf_conntrack_expect *a,
-				 const struct nf_conntrack_expect *b)
+				 const struct nf_conntrack_expect *b)//判断两个expect是否匹配
 {
 	return a->master == b->master &&
 	       nf_ct_tuple_equal(&a->tuple, &b->tuple) &&
@@ -271,7 +288,7 @@ EXPORT_SYMBOL_GPL(nf_ct_unexpect_related);
 /* We don't increase the master conntrack refcount for non-fulfilled
  * conntracks. During the conntrack destruction, the expectations are
  * always killed before the conntrack itself */
-struct nf_conntrack_expect *nf_ct_expect_alloc(struct nf_conn *me)
+struct nf_conntrack_expect *nf_ct_expect_alloc(struct nf_conn *me)//申请expect
 {
 	struct nf_conntrack_expect *new;
 
@@ -279,7 +296,7 @@ struct nf_conntrack_expect *nf_ct_expect_alloc(struct nf_conn *me)
 	if (!new)
 		return NULL;
 
-	new->master = me;
+	new->master = me;//设置expect的主连接
 	refcount_set(&new->use, 1);
 	return new;
 }
@@ -353,12 +370,12 @@ static void nf_ct_expect_free_rcu(struct rcu_head *head)
 
 void nf_ct_expect_put(struct nf_conntrack_expect *exp)
 {
-	if (refcount_dec_and_test(&exp->use))
+	if (refcount_dec_and_test(&exp->use))//引用递减为0，可以call_rcu释放了。
 		call_rcu(&exp->rcu, nf_ct_expect_free_rcu);
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_put);
 
-static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
+static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)//插入expect
 {
 	struct nf_conn_help *master_help = nfct_help(exp->master);
 	struct nf_conntrack_helper *helper;
@@ -366,17 +383,18 @@ static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
 	unsigned int h = nf_ct_expect_dst_hash(net, &exp->tuple);
 
 	/* two references : one for hash insert, one for the timer */
-	refcount_add(2, &exp->use);
+	refcount_add(2, &exp->use);//所有的expect必须有timeout
 
 	timer_setup(&exp->timeout, nf_ct_expectation_timed_out, 0);
 	helper = rcu_dereference_protected(master_help->helper,
 					   lockdep_is_held(&nf_conntrack_expect_lock));
 	if (helper) {
 		exp->timeout.expires = jiffies +
-			helper->expect_policy[exp->class].timeout * HZ;
+			helper->expect_policy[exp->class].timeout * HZ;//exp的超时时间
 	}
 	add_timer(&exp->timeout);
 
+	/* 将exp插入到表中 */
 	hlist_add_head_rcu(&exp->lnode, &master_help->expectations);
 	master_help->expecting[exp->class]++;
 
@@ -388,7 +406,7 @@ static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
 
 /* Race with expectations being used means we could have none to find; OK. */
 static void evict_oldest_expect(struct nf_conn *master,
-				struct nf_conntrack_expect *new)
+				struct nf_conntrack_expect *new)//删掉同类型最早的expect
 {
 	struct nf_conn_help *master_help = nfct_help(master);
 	struct nf_conntrack_expect *exp, *last = NULL;
@@ -402,6 +420,7 @@ static void evict_oldest_expect(struct nf_conn *master,
 		nf_ct_remove_expect(last);
 }
 
+/* 插入expect前，需要做的检查 */
 static inline int __nf_ct_expect_check(struct nf_conntrack_expect *expect)
 {
 	const struct nf_conntrack_expect_policy *p;
@@ -420,13 +439,13 @@ static inline int __nf_ct_expect_check(struct nf_conntrack_expect *expect)
 	}
 	h = nf_ct_expect_dst_hash(net, &expect->tuple);
 	hlist_for_each_entry_safe(i, next, &nf_ct_expect_hash[h], hnode) {
-		if (expect_matches(i, expect)) {
-			if (i->class != expect->class)
+		if (expect_matches(i, expect)) {//判断是否是匹配的expect
+			if (i->class != expect->class)//匹配，但类型不同，则报错
 				return -EALREADY;
 
-			if (nf_ct_remove_expect(i))
+			if (nf_ct_remove_expect(i))//类型相同，删除旧的
 				break;
-		} else if (expect_clash(i, expect)) {
+		} else if (expect_clash(i, expect)) {//判断是否互相冲突
 			ret = -EBUSY;
 			goto out;
 		}
@@ -437,17 +456,17 @@ static inline int __nf_ct_expect_check(struct nf_conntrack_expect *expect)
 	if (helper) {
 		p = &helper->expect_policy[expect->class];
 		if (p->max_expected &&
-		    master_help->expecting[expect->class] >= p->max_expected) {
-			evict_oldest_expect(master, expect);
+		    master_help->expecting[expect->class] >= p->max_expected) {//检查是否超过该类型的个数限制
+			evict_oldest_expect(master, expect);//删掉该类型最老的expect
 			if (master_help->expecting[expect->class]
-						>= p->max_expected) {
+						>= p->max_expected) {//再次检查个数
 				ret = -EMFILE;
 				goto out;
 			}
 		}
 	}
 
-	if (net->ct.expect_count >= nf_ct_expect_max) {
+	if (net->ct.expect_count >= nf_ct_expect_max) {//检查是否expect超过总个数限制
 		net_warn_ratelimited("nf_conntrack: expectation table full\n");
 		ret = -EMFILE;
 	}
@@ -461,11 +480,11 @@ int nf_ct_expect_related_report(struct nf_conntrack_expect *expect,
 	int ret;
 
 	spin_lock_bh(&nf_conntrack_expect_lock);
-	ret = __nf_ct_expect_check(expect);
+	ret = __nf_ct_expect_check(expect);//做插入前的检查
 	if (ret < 0)
 		goto out;
 
-	nf_ct_expect_insert(expect);
+	nf_ct_expect_insert(expect);//插入expect
 
 	spin_unlock_bh(&nf_conntrack_expect_lock);
 	nf_ct_expect_event_report(IPEXP_NEW, expect, portid, report);
@@ -476,6 +495,7 @@ out:
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_related_report);
 
+/* 遍历expect表，删除符合条件的expect节点 */
 void nf_ct_expect_iterate_destroy(bool (*iter)(struct nf_conntrack_expect *e, void *data),
 				  void *data)
 {
@@ -500,6 +520,10 @@ void nf_ct_expect_iterate_destroy(bool (*iter)(struct nf_conntrack_expect *e, vo
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_iterate_destroy);
 
+/*
+与上面的nf_ct_expect_iterate_destroy相似。
+也是遍历expect表，删除符合条件的expect节点，但需要指定namespace，且会发送删除事件通知
+*/
 void nf_ct_expect_iterate_net(struct net *net,
 			      bool (*iter)(struct nf_conntrack_expect *e, void *data),
 			      void *data,
@@ -530,6 +554,7 @@ void nf_ct_expect_iterate_net(struct net *net,
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_iterate_net);
 
+/* 下面是expect的proc输出的支持 */
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
 struct ct_expect_iter_state {
 	struct seq_net_private p;
@@ -688,19 +713,20 @@ void nf_conntrack_expect_pernet_fini(struct net *net)
 
 int nf_conntrack_expect_init(void)
 {
+	/* 没有指定expect的hash表大小，就根据会话表的大小来设置 */
 	if (!nf_ct_expect_hsize) {
 		nf_ct_expect_hsize = nf_conntrack_htable_size / 256;
 		if (!nf_ct_expect_hsize)
 			nf_ct_expect_hsize = 1;
 	}
-	nf_ct_expect_max = nf_ct_expect_hsize * 4;
+	nf_ct_expect_max = nf_ct_expect_hsize * 4;//expect的最大个数
 	nf_ct_expect_cachep = kmem_cache_create("nf_conntrack_expect",
 				sizeof(struct nf_conntrack_expect),
-				0, 0, NULL);
+				0, 0, NULL);//创建expect的slab
 	if (!nf_ct_expect_cachep)
 		return -ENOMEM;
 
-	nf_ct_expect_hash = nf_ct_alloc_hashtable(&nf_ct_expect_hsize, 0);
+	nf_ct_expect_hash = nf_ct_alloc_hashtable(&nf_ct_expect_hsize, 0);//申请expect hash表
 	if (!nf_ct_expect_hash) {
 		kmem_cache_destroy(nf_ct_expect_cachep);
 		return -ENOMEM;
