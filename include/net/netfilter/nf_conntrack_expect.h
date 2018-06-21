@@ -17,27 +17,27 @@ extern struct hlist_head *nf_ct_expect_hash;
 
 struct nf_conntrack_expect {
 	/* Conntrack expectation list member */
-	struct hlist_node lnode;
+	struct hlist_node lnode;//用于挂在master conn上的链表
 
 	/* Hash member */
-	struct hlist_node hnode;
+	struct hlist_node hnode;//用于挂在expect的hash表
 
 	/* We expect this tuple, with the following mask */
-	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple tuple;//tuple和mask用于匹配conntrack
 	struct nf_conntrack_tuple_mask mask;
 
 	/* Function to call after setup and insertion */
 	void (*expectfn)(struct nf_conn *new,
-			 struct nf_conntrack_expect *this);
+			 struct nf_conntrack_expect *this);//当连接匹配了expect，则调用该函数
 
 	/* Helper to assign to new connection */
-	struct nf_conntrack_helper *helper;
+	struct nf_conntrack_helper *helper;//一般用于ALG
 
 	/* The conntrack of the master connection */
-	struct nf_conn *master;
+	struct nf_conn *master;//expect属于哪个conntrack
 
 	/* Timer function; deletes the expectation. */
-	struct timer_list timeout;
+	struct timer_list timeout;//expect的超时时间
 
 	/* Usage count. */
 	refcount_t use;
@@ -46,7 +46,7 @@ struct nf_conntrack_expect {
 	unsigned int flags;
 
 	/* Expectation class */
-	unsigned int class;
+	unsigned int class;//expect的类型
 
 #ifdef CONFIG_NF_NAT_NEEDED
 	union nf_inet_addr saved_addr;
