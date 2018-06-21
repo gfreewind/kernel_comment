@@ -1114,7 +1114,7 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 	void *loc_cpu_entry;
 	struct ipt_entry *iter;
 
-	if (copy_from_user(&tmp, user, sizeof(tmp)) != 0)
+	if (copy_from_user(&tmp, user, sizeof(tmp)) != 0) //把数据从用户空间，复制到内核空间
 		return -EFAULT;
 
 	/* overflow check */
@@ -1125,6 +1125,7 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 
 	tmp.name[sizeof(tmp.name)-1] = 0;
 
+	/* 申请对应的内核结构 */
 	newinfo = xt_alloc_table_info(tmp.size);
 	if (!newinfo)
 		return -ENOMEM;
@@ -1136,7 +1137,7 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 		goto free_newinfo;
 	}
 
-	ret = translate_table(net, newinfo, loc_cpu_entry, &tmp);
+	ret = translate_table(net, newinfo, loc_cpu_entry, &tmp); //将规则转换为dataplane的结构
 	if (ret != 0)
 		goto free_newinfo;
 
@@ -1663,7 +1664,7 @@ compat_do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
 #endif
 
 static int
-do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
+do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len) //iptables的配置入口
 {
 	int ret;
 
@@ -1672,11 +1673,11 @@ do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 
 	switch (cmd) {
 	case IPT_SO_SET_REPLACE:
-		ret = do_replace(sock_net(sk), user, len);
+		ret = do_replace(sock_net(sk), user, len); //iptables的规则虽然是一条一条增加，但是配置时，是完整的替换一个table的规则
 		break;
 
 	case IPT_SO_SET_ADD_COUNTERS:
-		ret = do_add_counters(sock_net(sk), user, len, 0);
+		ret = do_add_counters(sock_net(sk), user, len, 0); //每次替换规则后，要把之前的计数加上
 		break;
 
 	default:
@@ -1687,7 +1688,7 @@ do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 }
 
 static int
-do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
+do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len) //iptables获取配置入口
 {
 	int ret;
 
@@ -1854,10 +1855,11 @@ static int icmp_checkentry(const struct xt_mtchk_param *par)
 	return (icmpinfo->invflags & ~IPT_ICMP_INV) ? -EINVAL : 0;
 }
 
+/* iptables的内置target，即标准target */
 static struct xt_target ipt_builtin_tg[] __read_mostly = {
 	{
-		.name             = XT_STANDARD_TARGET,
-		.targetsize       = sizeof(int),
+		.name             = XT_STANDARD_TARGET, // 空字符串，表示标准target
+		.targetsize       = sizeof(int), // 内置target的值是用整数表示ACCEPT，DROP等
 		.family           = NFPROTO_IPV4,
 #ifdef CONFIG_COMPAT
 		.compatsize       = sizeof(compat_int_t),
@@ -1873,23 +1875,25 @@ static struct xt_target ipt_builtin_tg[] __read_mostly = {
 	},
 };
 
+/* iptables的sock opt */
 static struct nf_sockopt_ops ipt_sockopts = {
 	.pf		= PF_INET,
 	.set_optmin	= IPT_BASE_CTL,
 	.set_optmax	= IPT_SO_SET_MAX+1,
-	.set		= do_ipt_set_ctl,
+	.set		= do_ipt_set_ctl, //配置入口
 #ifdef CONFIG_COMPAT
 	.compat_set	= compat_do_ipt_set_ctl,
 #endif
 	.get_optmin	= IPT_BASE_CTL,
 	.get_optmax	= IPT_SO_GET_MAX+1,
-	.get		= do_ipt_get_ctl,
+	.get		= do_ipt_get_ctl, //获取入口
 #ifdef CONFIG_COMPAT
 	.compat_get	= compat_do_ipt_get_ctl,
 #endif
 	.owner		= THIS_MODULE,
 };
 
+/* 内置的icmp匹配 */
 static struct xt_match ipt_builtin_mt[] __read_mostly = {
 	{
 		.name       = "icmp",
@@ -1925,15 +1929,15 @@ static int __init ip_tables_init(void)
 		goto err1;
 
 	/* No one else will be downing sem now, so we won't sleep */
-	ret = xt_register_targets(ipt_builtin_tg, ARRAY_SIZE(ipt_builtin_tg));
+	ret = xt_register_targets(ipt_builtin_tg, ARRAY_SIZE(ipt_builtin_tg)); // 注册内置target，也就是标准target
 	if (ret < 0)
 		goto err2;
-	ret = xt_register_matches(ipt_builtin_mt, ARRAY_SIZE(ipt_builtin_mt));
+	ret = xt_register_matches(ipt_builtin_mt, ARRAY_SIZE(ipt_builtin_mt)); //注册内置的match，其实就一个icmp，不明白为什么这个之前不写成扩展
 	if (ret < 0)
 		goto err4;
 
 	/* Register setsockopt */
-	ret = nf_register_sockopt(&ipt_sockopts);
+	ret = nf_register_sockopt(&ipt_sockopts); // iptables通过sock opt的方式与内核通信
 	if (ret < 0)
 		goto err5;
 
