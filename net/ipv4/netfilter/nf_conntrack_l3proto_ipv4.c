@@ -103,19 +103,19 @@ static unsigned int ipv4_helper(void *priv,
 
 	/* This is where we call the helper: as the packet goes out. */
 	ct = nf_ct_get(skb, &ctinfo);
-	if (!ct || ctinfo == IP_CT_RELATED_REPLY)
+	if (!ct || ctinfo == IP_CT_RELATED_REPLY)//没有连接，或者是IP_CT_RELATED_REPLY状态（目前只有内核对这个连接产生一个关联的ICMP，才是这个状态），直接返回
 		return NF_ACCEPT;
 
 	help = nfct_help(ct);
 	if (!help)
-		return NF_ACCEPT;
+		return NF_ACCEPT; //没有help扩展，自然也直接返回
 
 	/* rcu_read_lock()ed by nf_hook_thresh */
 	helper = rcu_dereference(help->helper);
 	if (!helper)
 		return NF_ACCEPT;
 
-	return helper->help(skb, skb_network_offset(skb) + ip_hdrlen(skb),
+	return helper->help(skb, skb_network_offset(skb) + ip_hdrlen(skb), //调用help回调函数
 			    ct, ctinfo);
 }
 
@@ -191,10 +191,10 @@ static const struct nf_hook_ops ipv4_conntrack_ops[] = {
 		.priority	= NF_IP_PRI_CONNTRACK,
 	},
 	{
-		.hook		= ipv4_helper,
+		.hook		= ipv4_helper,//执行模块定义的helper操作。其中help扩展，一般是通过关联连接，CT等配置的。
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_POST_ROUTING,
-		.priority	= NF_IP_PRI_CONNTRACK_HELPER,
+		.priority	= NF_IP_PRI_CONNTRACK_HELPER,//netfilter标准操作，confirm前最后一个hook
 	},
 	{
 		.hook		= ipv4_confirm,
