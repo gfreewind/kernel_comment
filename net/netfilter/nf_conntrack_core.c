@@ -1291,7 +1291,7 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 		spin_unlock(&nf_conntrack_expect_lock);
 	}
 	if (!exp)
-		__nf_ct_try_assign_helper(ct, tmpl, GFP_ATOMIC); // 如需要，为当前连接加上helper扩展
+		__nf_ct_try_assign_helper(ct, tmpl, GFP_ATOMIC); //没有匹配的expect，表示其是一个“独立”的连接。尝试查找该连接是否需要help扩展
 
 	/* Now it is inserted into the unconfirmed list, bump refcount */
 	nf_conntrack_get(&ct->ct_general); // 增加引用计数
