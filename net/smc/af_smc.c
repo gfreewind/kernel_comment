@@ -147,7 +147,8 @@ static int smc_release(struct socket *sock)
 		smc->clcsock = NULL;
 	}
 	if (smc->use_fallback) {
-		sock_put(sk); /* passive closing */
+		if (sk->sk_state != SMC_LISTEN && sk->sk_state != SMC_INIT)
+			sock_put(sk); /* passive closing */
 		sk->sk_state = SMC_CLOSED;
 		sk->sk_state_change(sk);
 	}
@@ -417,12 +418,18 @@ static int smc_connect_decline_fallback(struct smc_sock *smc, int reason_code)
 {
 	int rc;
 
-	if (reason_code < 0) /* error, fallback is not possible */
+	if (reason_code < 0) { /* error, fallback is not possible */
+		if (smc->sk.sk_state == SMC_INIT)
+			sock_put(&smc->sk); /* passive closing */
 		return reason_code;
+	}
 	if (reason_code != SMC_CLC_DECL_REPLY) {
 		rc = smc_clc_send_decline(smc, reason_code);
-		if (rc < 0)
+		if (rc < 0) {
+			if (smc->sk.sk_state == SMC_INIT)
+				sock_put(&smc->sk); /* passive closing */
 			return rc;
+		}
 	}
 	return smc_connect_fallback(smc);
 }
@@ -435,8 +442,6 @@ static int smc_connect_abort(struct smc_sock *smc, int reason_code,
 		smc_lgr_forget(smc->conn.lgr);
 	mutex_unlock(&smc_create_lgr_pending);
 	smc_conn_free(&smc->conn);
-	if (reason_code < 0 && smc->sk.sk_state == SMC_INIT)
-		sock_put(&smc->sk); /* passive closing */
 	return reason_code;
 }
 
@@ -1327,7 +1332,8 @@ static __poll_t smc_accept_poll(struct sock *parent)
 	return mask;
 }
 
-static __poll_t smc_poll_mask(struct socket *sock, __poll_t events)
+static __poll_t smc_poll(struct file *file, struct socket *sock,
+			     poll_table *wait)
 {
 	struct sock *sk = sock->sk;
 	__poll_t mask = 0;
@@ -1339,7 +1345,7 @@ static __poll_t smc_poll_mask(struct socket *sock, __poll_t events)
 	smc = smc_sk(sock->sk);
 	if ((sk->sk_state == SMC_INIT) || smc->use_fallback) {
 		/* delegate to CLC child sock */
-		mask = smc->clcsock->ops->poll_mask(smc->clcsock, events);
+		mask = smc->clcsock->ops->poll(file, smc->clcsock, wait);
 		sk->sk_err = smc->clcsock->sk->sk_err;
 		if (sk->sk_err)
 			mask |= EPOLLERR;
@@ -1654,7 +1660,7 @@ static const struct proto_ops smc_sock_ops = {
 	.socketpair	= sock_no_socketpair,
 	.accept		= smc_accept,
 	.getname	= smc_getname,
-	.poll_mask	= smc_poll_mask,
+	.poll		= smc_poll,
 	.ioctl		= smc_ioctl,
 	.listen		= smc_listen,
 	.shutdown	= smc_shutdown,

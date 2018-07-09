@@ -30,10 +30,10 @@ struct nf_conn;
 
 /* The structure embedded in the conntrack structure. */
 struct nf_conn_nat {
-	union nf_conntrack_nat_help help;
+	union nf_conntrack_nat_help help;//保存应用做NAT的私有信息，目前只有PPTP使用了
 #if IS_ENABLED(CONFIG_NF_NAT_MASQUERADE_IPV4) || \
     IS_ENABLED(CONFIG_NF_NAT_MASQUERADE_IPV6)
-	int masq_index;
+	int masq_index;//出口线路（netdev）的索引
 #endif
 };
 

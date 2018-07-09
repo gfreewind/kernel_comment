@@ -19,7 +19,7 @@
 
 struct nf_conntrack_l3proto {
 	/* L3 Protocol Family number. ex) PF_INET */
-	u_int16_t l3proto;
+	u_int16_t l3proto;//3层协议族号
 
 	/* size of tuple nlattr, fills a hole */
 	u16 nla_size;
@@ -29,14 +29,14 @@ struct nf_conntrack_l3proto {
          * hdr.  Return true if possible.
 	 */
 	bool (*pkt_to_tuple)(const struct sk_buff *skb, unsigned int nhoff,
-			     struct nf_conntrack_tuple *tuple);
+			     struct nf_conntrack_tuple *tuple);//根据数据包skb和3层的偏移（在skb中）生成tuple
 
 	/*
 	 * Invert the per-proto part of the tuple: ie. turn xmit into reply.
 	 * Some packets can't be inverted: return 0 in that case.
 	 */
 	bool (*invert_tuple)(struct nf_conntrack_tuple *inverse,
-			     const struct nf_conntrack_tuple *orig);
+			     const struct nf_conntrack_tuple *orig);//反转tuple
 
 	/*
 	 * Called before tracking. 
@@ -44,7 +44,7 @@ struct nf_conntrack_l3proto {
 	 *	*protonum: protocol number
 	 */
 	int (*get_l4proto)(const struct sk_buff *skb, unsigned int nhoff,
-			   unsigned int *dataoff, u_int8_t *protonum);
+			   unsigned int *dataoff, u_int8_t *protonum);//根据数据包skb和3层偏移，得到4层协议起始位置和协议号
 
 #if IS_ENABLED(CONFIG_NF_CT_NETLINK)
 	int (*tuple_to_nlattr)(struct sk_buff *skb,

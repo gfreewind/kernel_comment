@@ -467,6 +467,11 @@ void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 
 	nf_ct_expect_iterate_destroy(expect_iter_me, NULL);//将引用当前helper的expect全部删除
 	nf_ct_iterate_destroy(unhelp, me);//重置会话表中连接对helper的引用。这里有一个Bug，我已经提交patch
+
+	/* Maybe someone has gotten the helper already when unhelp above.
+	 * So need to wait it.
+	 */
+	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_unregister);
 
