@@ -30,7 +30,7 @@ static inline int xt_ct_target(struct sk_buff *skb, struct nf_conn *ct)
 		atomic_inc(&ct->ct_general.use);
 		nf_ct_set(skb, ct, IP_CT_NEW);
 	} else {
-		nf_ct_set(skb, ct, IP_CT_UNTRACKED);
+		nf_ct_set(skb, ct, IP_CT_UNTRACKED);//设置skb为untracked
 	}
 
 	return XT_CONTINUE;
@@ -87,13 +87,13 @@ xt_ct_set_helper(struct nf_conn *ct, const char *helper_name,
 	}
 
 	helper = nf_conntrack_helper_try_module_get(helper_name, par->family,
-						    proto);
+						    proto);//得到指定的helper
 	if (helper == NULL) {
 		pr_info_ratelimited("No such helper \"%s\"\n", helper_name);
 		return -ENOENT;
 	}
 
-	help = nf_ct_helper_ext_add(ct, helper, GFP_KERNEL);
+	help = nf_ct_helper_ext_add(ct, helper, GFP_KERNEL);//增加helper扩展
 	if (help == NULL) {
 		nf_conntrack_helper_put(helper);
 		return -ENOMEM;
@@ -109,7 +109,7 @@ static void __xt_ct_tg_timeout_put(struct ctnl_timeout *timeout)
 	typeof(nf_ct_timeout_put_hook) timeout_put;
 
 	timeout_put = rcu_dereference(nf_ct_timeout_put_hook);
-	if (timeout_put)
+	if (timeout_put)//释放timeout的引用
 		timeout_put(timeout);
 }
 #endif
@@ -142,7 +142,7 @@ xt_ct_set_timeout(struct nf_conn *ct, const struct xt_tgchk_param *par,
 		goto out;
 	}
 
-	timeout = timeout_find_get(par->net, timeout_name);
+	timeout = timeout_find_get(par->net, timeout_name);//增加timeout计数
 	if (timeout == NULL) {
 		ret = -ENOENT;
 		pr_info_ratelimited("No such timeout policy \"%s\"\n",
@@ -166,7 +166,7 @@ xt_ct_set_timeout(struct nf_conn *ct, const struct xt_tgchk_param *par,
 				    timeout_name, 4, timeout->l4proto->l4proto);
 		goto err_put_timeout;
 	}
-	timeout_ext = nf_ct_timeout_ext_add(ct, timeout, GFP_ATOMIC);
+	timeout_ext = nf_ct_timeout_ext_add(ct, timeout, GFP_ATOMIC);//增加timeout扩展
 	if (!timeout_ext) {
 		ret = -ENOMEM;
 		goto err_put_timeout;
@@ -216,11 +216,11 @@ static int xt_ct_tg_check(const struct xt_tgchk_param *par,
 #ifndef CONFIG_NF_CONNTRACK_ZONES
 	if (info->zone || info->flags & (XT_CT_ZONE_DIR_ORIG |
 					 XT_CT_ZONE_DIR_REPL |
-					 XT_CT_ZONE_MARK))
+					 XT_CT_ZONE_MARK))//内核没有支持conntrack zone，但用户态配置了zone，则报错
 		goto err1;
 #endif
 
-	ret = nf_ct_netns_get(par->net, par->family);
+	ret = nf_ct_netns_get(par->net, par->family);//获得conntrack的namespace计数
 	if (ret < 0)
 		goto err1;
 
@@ -239,13 +239,13 @@ static int xt_ct_tg_check(const struct xt_tgchk_param *par,
 	ret = 0;
 	if ((info->ct_events || info->exp_events) &&
 	    !nf_ct_ecache_ext_add(ct, info->ct_events, info->exp_events,
-				  GFP_KERNEL)) {
+				  GFP_KERNEL)) {//有连接和expect事件，则增加ecache的扩展
 		ret = -EINVAL;
 		goto err3;
 	}
 
 	if (info->helper[0]) {
-		if (strnlen(info->helper, sizeof(info->helper)) == sizeof(info->helper)) {
+		if (strnlen(info->helper, sizeof(info->helper)) == sizeof(info->helper)) {//对于用户参数进行安全性检查
 			ret = -ENAMETOOLONG;
 			goto err3;
 		}
@@ -256,7 +256,7 @@ static int xt_ct_tg_check(const struct xt_tgchk_param *par,
 	}
 
 	if (info->timeout[0]) {
-		if (strnlen(info->timeout, sizeof(info->timeout)) == sizeof(info->timeout)) {
+		if (strnlen(info->timeout, sizeof(info->timeout)) == sizeof(info->timeout)) {//对于用户参数进行安全性检查
 			ret = -ENAMETOOLONG;
 			goto err4;
 		}
@@ -291,19 +291,19 @@ static int xt_ct_tg_check_v0(const struct xt_tgchk_param *par)
 		.zone		= info->zone,
 		.ct_events	= info->ct_events,
 		.exp_events	= info->exp_events,
-	};
+	};//没有初始化的成员变量，即为0
 	int ret;
 
-	if (info->flags & ~XT_CT_NOTRACK)
+	if (info->flags & ~XT_CT_NOTRACK)//标志位检查。v0只支持notrack
 		return -EINVAL;
 
-	memcpy(info_v1.helper, info->helper, sizeof(info->helper));
+	memcpy(info_v1.helper, info->helper, sizeof(info->helper));//转换成v1的格式
 
-	ret = xt_ct_tg_check(par, &info_v1);
+	ret = xt_ct_tg_check(par, &info_v1);//参数检查
 	if (ret < 0)
 		return ret;
 
-	info->ct = info_v1.ct;
+	info->ct = info_v1.ct;//将结果赋给info v0
 
 	return ret;
 }
@@ -312,7 +312,7 @@ static int xt_ct_tg_check_v1(const struct xt_tgchk_param *par)
 {
 	struct xt_ct_target_info_v1 *info = par->targinfo;
 
-	if (info->flags & ~XT_CT_NOTRACK)
+	if (info->flags & ~XT_CT_NOTRACK)//标志位检查。v1只支持notrack
 		return -EINVAL;
 
 	return xt_ct_tg_check(par, par->targinfo);
@@ -322,7 +322,7 @@ static int xt_ct_tg_check_v2(const struct xt_tgchk_param *par)
 {
 	struct xt_ct_target_info_v1 *info = par->targinfo;
 
-	if (info->flags & ~XT_CT_MASK)
+	if (info->flags & ~XT_CT_MASK)//标志位检查，只允许有效标志位
 		return -EINVAL;
 
 	return xt_ct_tg_check(par, par->targinfo);
@@ -357,11 +357,11 @@ static void xt_ct_tg_destroy(const struct xt_tgdtor_param *par,
 	if (ct) {
 		help = nfct_help(ct);
 		if (help)
-			nf_conntrack_helper_put(help->helper);
+			nf_conntrack_helper_put(help->helper);//释放help
 
-		nf_ct_netns_put(par->net, par->family);
+		nf_ct_netns_put(par->net, par->family);//释放conntrack的namespace计数
 
-		xt_ct_destroy_timeout(ct);
+		xt_ct_destroy_timeout(ct);//释放timeout
 		nf_ct_put(info->ct);
 	}
 }
@@ -376,7 +376,7 @@ static void xt_ct_tg_destroy_v0(const struct xt_tgdtor_param *par)
 		.exp_events	= info->exp_events,
 		.ct		= info->ct,
 	};
-	memcpy(info_v1.helper, info->helper, sizeof(info->helper));
+	memcpy(info_v1.helper, info->helper, sizeof(info->helper));//生成v1的格式
 
 	xt_ct_tg_destroy(par, &info_v1);
 }
@@ -431,7 +431,7 @@ notrack_tg(struct sk_buff *skb, const struct xt_action_param *par)
 	if (skb->_nfct != 0)
 		return XT_CONTINUE;
 
-	nf_ct_set(skb, NULL, IP_CT_UNTRACKED);
+	nf_ct_set(skb, NULL, IP_CT_UNTRACKED);//设置skb为untracked
 
 	return XT_CONTINUE;
 }
@@ -446,6 +446,7 @@ static int notrack_chk(const struct xt_tgchk_param *par)
 	return 0;
 }
 
+/* 不进行连接跟踪target */
 static struct xt_target notrack_tg_reg __read_mostly = {
 	.name		= "NOTRACK",
 	.revision	= 0,
