@@ -34,7 +34,7 @@
 static int conntrack4_net_id __read_mostly;
 static DEFINE_MUTEX(register_ipv4_hooks);
 
-struct conntrack4_net {
+struct conntrack4_net {//本模块的使用计数
 	unsigned int users;
 };
 
@@ -44,11 +44,11 @@ static bool ipv4_pkt_to_tuple(const struct sk_buff *skb, unsigned int nhoff,
 	const __be32 *ap;
 	__be32 _addrs[2];
 	ap = skb_header_pointer(skb, nhoff + offsetof(struct iphdr, saddr),
-				sizeof(u_int32_t) * 2, _addrs);
+				sizeof(u_int32_t) * 2, _addrs);//获取IP首部的源地址和目的地址，使用skb_header_pointer可以处理非线性化的内存
 	if (ap == NULL)
 		return false;
 
-	tuple->src.u3.ip = ap[0];
+	tuple->src.u3.ip = ap[0];//设置tuple的源IP和目的IP
 	tuple->dst.u3.ip = ap[1];
 
 	return true;
@@ -57,7 +57,7 @@ static bool ipv4_pkt_to_tuple(const struct sk_buff *skb, unsigned int nhoff,
 static bool ipv4_invert_tuple(struct nf_conntrack_tuple *tuple,
 			      const struct nf_conntrack_tuple *orig)
 {
-	tuple->src.u3.ip = orig->dst.u3.ip;
+	tuple->src.u3.ip = orig->dst.u3.ip;//交互源IP和目的IP
 	tuple->dst.u3.ip = orig->src.u3.ip;
 
 	return true;
@@ -69,20 +69,20 @@ static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 	const struct iphdr *iph;
 	struct iphdr _iph;
 
-	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
+	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);//得到IP首部
 	if (iph == NULL)
 		return -NF_ACCEPT;
 
 	/* Conntrack defragments packets, we might still see fragments
 	 * inside ICMP packets though. */
-	if (iph->frag_off & htons(IP_OFFSET))
+	if (iph->frag_off & htons(IP_OFFSET))//conntrack模块会重组IP分配，所以这里不应该看到有IP分片
 		return -NF_ACCEPT;
 
-	*dataoff = nhoff + (iph->ihl << 2);
+	*dataoff = nhoff + (iph->ihl << 2);//得到4层协议偏移和协议号
 	*protonum = iph->protocol;
 
 	/* Check bogus IP headers */
-	if (*dataoff > skb->len) {
+	if (*dataoff > skb->len) {//做合法性检查
 		pr_debug("nf_conntrack_ipv4: bogus IPv4 packet: "
 			 "nhoff %u, ihl %u, skblen %u\n",
 			 nhoff, iph->ihl << 2, skb->len);
@@ -133,7 +133,7 @@ static unsigned int ipv4_confirm(void *priv,
 
 	/* adjust seqs for loopback traffic only in outgoing direction */
 	if (test_bit(IPS_SEQ_ADJUST_BIT, &ct->status) &&
-	    !nf_is_loopback_packet(skb)) {
+	    !nf_is_loopback_packet(skb)) {//连接需要调整sequence
 		if (!nf_ct_seq_adjust(skb, ct, ctinfo, ip_hdrlen(skb))) {
 			NF_CT_STAT_INC_ATOMIC(nf_ct_net(ct), drop);
 			return NF_DROP;
@@ -141,19 +141,19 @@ static unsigned int ipv4_confirm(void *priv,
 	}
 out:
 	/* We've seen it coming out the other side: confirm it */
-	return nf_conntrack_confirm(skb);
+	return nf_conntrack_confirm(skb);//确认该连接
 }
 
 static unsigned int ipv4_conntrack_in(void *priv,
 				      struct sk_buff *skb,
-				      const struct nf_hook_state *state)
+				      const struct nf_hook_state *state)//连接跟踪的收包的入口函数
 {
 	return nf_conntrack_in(state->net, PF_INET, state->hook, skb);
 }
 
 static unsigned int ipv4_conntrack_local(void *priv,
 					 struct sk_buff *skb,
-					 const struct nf_hook_state *state)
+					 const struct nf_hook_state *state)//连接跟踪本地发包的入口函数
 {
 	if (ip_is_fragment(ip_hdr(skb))) { /* IP_NODEFRAG setsockopt set */
 		enum ip_conntrack_info ctinfo;
@@ -221,7 +221,7 @@ static const struct nf_hook_ops ipv4_conntrack_ops[] = {
 /* Reversing the socket's dst/src point of view gives us the reply
    mapping. */
 static int
-getorigdst(struct sock *sk, int optval, void __user *user, int *len)
+getorigdst(struct sock *sk, int optval, void __user *user, int *len)//根据用户态传递参数，得到连接的目的信息
 {
 	const struct inet_sock *inet = inet_sk(sk);
 	const struct nf_conntrack_tuple_hash *h;
@@ -328,7 +328,7 @@ static int ipv4_hooks_register(struct net *net)
 	mutex_lock(&register_ipv4_hooks);
 
 	cnet->users++;
-	if (cnet->users > 1)
+	if (cnet->users > 1)//通过计数，保证只有第一次才真正执行注册的操作（后面的流程）
 		goto out_unlock;
 
 	err = nf_defrag_ipv4_enable(net);
@@ -337,7 +337,7 @@ static int ipv4_hooks_register(struct net *net)
 		goto out_unlock;
 	}
 
-	err = nf_register_net_hooks(net, ipv4_conntrack_ops,
+	err = nf_register_net_hooks(net, ipv4_conntrack_ops,//注册IPv4对conntrack的支持
 				    ARRAY_SIZE(ipv4_conntrack_ops));
 
 	if (err)
@@ -382,7 +382,7 @@ MODULE_ALIAS("nf_conntrack-" __stringify(AF_INET));
 MODULE_ALIAS("ip_conntrack");
 MODULE_LICENSE("GPL");
 
-static const struct nf_conntrack_l4proto * const builtin_l4proto4[] = {
+static const struct nf_conntrack_l4proto * const builtin_l4proto4[] = {//内置4层协议对conntrack的支持
 	&nf_conntrack_l4proto_tcp4,
 	&nf_conntrack_l4proto_udp4,
 	&nf_conntrack_l4proto_icmp,
@@ -420,7 +420,7 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 {
 	int ret = 0;
 
-	need_conntrack();
+	need_conntrack();//技巧，表示该模块依赖于conntrack
 
 #if IS_ENABLED(CONFIG_NF_CT_NETLINK)
 	if (WARN_ON(nla_policy_len(ipv4_nla_policy, CTA_IP_MAX + 1) !=
@@ -440,11 +440,11 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 	}
 
 	ret = nf_ct_l4proto_register(builtin_l4proto4,
-				     ARRAY_SIZE(builtin_l4proto4));
+				     ARRAY_SIZE(builtin_l4proto4));//注册内置的4层协议对conntrack的支持
 	if (ret < 0)
 		goto cleanup_pernet;
 
-	ret = nf_ct_l3proto_register(&nf_conntrack_l3proto_ipv4);
+	ret = nf_ct_l3proto_register(&nf_conntrack_l3proto_ipv4);//注册IPv4的conntrack支持
 	if (ret < 0) {
 		pr_err("nf_conntrack_ipv4: can't register ipv4 proto.\n");
 		goto cleanup_l4proto;
