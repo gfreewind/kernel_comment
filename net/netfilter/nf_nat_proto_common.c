@@ -20,11 +20,11 @@
 bool nf_nat_l4proto_in_range(const struct nf_conntrack_tuple *tuple,
 			     enum nf_nat_manip_type maniptype,
 			     const union nf_conntrack_man_proto *min,
-			     const union nf_conntrack_man_proto *max)
+			     const union nf_conntrack_man_proto *max)//判断4层端口是否在范围内
 {
 	__be16 port;
 
-	if (maniptype == NF_NAT_MANIP_SRC)
+	if (maniptype == NF_NAT_MANIP_SRC)//根据方向，选择不同的端口
 		port = tuple->src.u.all;
 	else
 		port = tuple->dst.u.all;
@@ -53,25 +53,25 @@ void nf_nat_l4proto_unique_tuple(const struct nf_nat_l3proto *l3proto,
 		portptr = &tuple->dst.u.all;
 
 	/* If no range specified... */
-	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED)) {
+	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED)) {//没有指定端口范围
 		/* If it's dst rewrite, can't change port */
-		if (maniptype == NF_NAT_MANIP_DST)
+		if (maniptype == NF_NAT_MANIP_DST)//DNAT，不改变端口
 			return;
 
 		if (ntohs(*portptr) < 1024) {
 			/* Loose convention: >> 512 is credential passing */
-			if (ntohs(*portptr) < 512) {
+			if (ntohs(*portptr) < 512) {//原端口小于512，NAT范围为1~512
 				min = 1;
 				range_size = 511 - min + 1;
-			} else {
+			} else {//原端口是512~1024，NAT范围是600~1023
 				min = 600;
 				range_size = 1023 - min + 1;
 			}
-		} else {
+		} else {//原端口大于等于1024，则NAT范围为1024~65535
 			min = 1024;
 			range_size = 65535 - 1024 + 1;
 		}
-	} else {
+	} else {//用户指定了NAT后的端口范围
 		min = ntohs(range->min_proto.all);
 		max = ntohs(range->max_proto.all);
 		if (unlikely(max < min))
@@ -79,25 +79,26 @@ void nf_nat_l4proto_unique_tuple(const struct nf_nat_l3proto *l3proto,
 		range_size = max - min + 1;
 	}
 
-	if (range->flags & NF_NAT_RANGE_PROTO_RANDOM) {
+	/* 根据配置确定不同的NAT端口起始值 */
+	if (range->flags & NF_NAT_RANGE_PROTO_RANDOM) {//按照源IP，目的IP，目的端口生成随机端口
 		off = l3proto->secure_port(tuple, maniptype == NF_NAT_MANIP_SRC
 						  ? tuple->dst.u.all
 						  : tuple->src.u.all);
 	} else if (range->flags & NF_NAT_RANGE_PROTO_RANDOM_FULLY) {
-		off = prandom_u32();
+		off = prandom_u32();//完全随机
 	} else if (range->flags & NF_NAT_RANGE_PROTO_OFFSET) {
-		off = (ntohs(*portptr) - ntohs(range->base_proto.all));
+		off = (ntohs(*portptr) - ntohs(range->base_proto.all));//明确指定端口范围
 	} else {
-		off = *rover;
+		off = *rover;//从上次NAT后的端口开始
 	}
 
-	for (i = 0; ; ++off) {
-		*portptr = htons(min + off % range_size);
-		if (++i != range_size && nf_nat_used_tuple(tuple, ct))
+	for (i = 0; ; ++off) {//从起始NAT端口开始查找，直到找到可使用的NAT端口
+		*portptr = htons(min + off % range_size);//得到一个候选端口
+		if (++i != range_size && nf_nat_used_tuple(tuple, ct))//判断该tuple是否被使用了
 			continue;
 		if (!(range->flags & (NF_NAT_RANGE_PROTO_RANDOM_ALL|
 					NF_NAT_RANGE_PROTO_OFFSET)))
-			*rover = off;
+			*rover = off;//更新全局端口起始值
 		return;
 	}
 }
