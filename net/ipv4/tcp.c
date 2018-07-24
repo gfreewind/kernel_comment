@@ -1998,7 +1998,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			 * shouldn't happen.
 			 */
 			if (WARN(before(*seq, TCP_SKB_CB(skb)->seq),
-				 "recvmsg bug: copied %X seq %X rcvnxt %X fl %X\n",
+				 "TCP recvmsg seq # bug: copied %X, seq %X, rcvnxt %X, fl %X\n",
 				 *seq, TCP_SKB_CB(skb)->seq, tp->rcv_nxt,
 				 flags))
 				break;
@@ -2013,7 +2013,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 				goto found_fin_ok;
 			WARN(!(flags & MSG_PEEK),
-			     "recvmsg bug 2: copied %X seq %X rcvnxt %X fl %X\n",
+			     "TCP recvmsg seq # bug 2: copied %X, seq %X, rcvnxt %X, fl %X\n",
 			     *seq, TCP_SKB_CB(skb)->seq, tp->rcv_nxt, flags);
 		}
 
@@ -2823,16 +2823,17 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 	case TCP_REPAIR:
 		if (!tcp_can_repair_sock(sk))
 			err = -EPERM;
-		/* 1 for normal repair, 2 for no window probes */
-		else if (val == 1 || val == 2) {
-			tp->repair = val;
+		else if (val == TCP_REPAIR_ON) {
+			tp->repair = 1;
 			sk->sk_reuse = SK_FORCE_REUSE;
 			tp->repair_queue = TCP_NO_QUEUE;
-		} else if (val == 0) {
+		} else if (val == TCP_REPAIR_OFF) {
 			tp->repair = 0;
 			sk->sk_reuse = SK_NO_REUSE;
-			if (tp->repair == 1)
-				tcp_send_window_probe(sk);
+			tcp_send_window_probe(sk);
+		} else if (val == TCP_REPAIR_OFF_NO_WP) {
+			tp->repair = 0;
+			sk->sk_reuse = SK_NO_REUSE;
 		} else
 			err = -EINVAL;
 

@@ -440,7 +440,7 @@ alloc_encrypted:
 			ret = tls_push_record(sk, msg->msg_flags, record_type);
 			if (!ret)
 				continue;
-			if (ret == -EAGAIN)
+			if (ret < 0)
 				goto send_end;
 
 			copied -= try_to_copy;
@@ -645,6 +645,9 @@ static struct sk_buff *tls_wait_data(struct sock *sk, int flags,
 			*err = sock_error(sk);
 			return NULL;
 		}
+
+		if (sk->sk_shutdown & RCV_SHUTDOWN)
+			return NULL;
 
 		if (sock_flag(sk, SOCK_DONE))
 			return NULL;
