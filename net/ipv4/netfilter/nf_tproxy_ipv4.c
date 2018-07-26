@@ -27,12 +27,12 @@ nf_tproxy_handle_time_wait4(struct net *net, struct sk_buff *skb,
 	struct tcphdr _hdr, *hp;
 
 	hp = skb_header_pointer(skb, ip_hdrlen(skb), sizeof(_hdr), &_hdr);
-	if (hp == NULL) {
+	if (hp == NULL) {//获取TCP首部失败，就释放掉socket
 		inet_twsk_put(inet_twsk(sk));
 		return NULL;
 	}
 
-	if (hp->syn && !hp->rst && !hp->ack && !hp->fin) {
+	if (hp->syn && !hp->rst && !hp->ack && !hp->fin) {//如果是syn包，那就尝试匹配listen状态的socket
 		/* SYN to a TIME_WAIT socket, we'd rather redirect it
 		 * to a listener socket if there's one */
 		struct sock *sk2;
@@ -42,7 +42,7 @@ nf_tproxy_handle_time_wait4(struct net *net, struct sk_buff *skb,
 					    hp->source, lport ? lport : hp->dest,
 					    skb->dev, NF_TPROXY_LOOKUP_LISTENER);
 		if (sk2) {
-			inet_twsk_deschedule_put(inet_twsk(sk));
+			inet_twsk_deschedule_put(inet_twsk(sk));//如果找到listen状态的socket，可以尽快杀掉timewait状态的socket
 			sk = sk2;
 		}
 	}
@@ -51,14 +51,17 @@ nf_tproxy_handle_time_wait4(struct net *net, struct sk_buff *skb,
 }
 EXPORT_SYMBOL_GPL(nf_tproxy_handle_time_wait4);
 
-__be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)
+__be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)//获得监听地址
 {
 	struct in_device *indev;
 	__be32 laddr;
 
-	if (user_laddr)
+	if (user_laddr)//用户配置了地址，就使用指定地址
 		return user_laddr;
 
+	/*
+	用户没有配置地址，就使用接收网卡的primary ip。
+	*/
 	laddr = 0;
 	indev = __in_dev_get_rcu(skb->dev);
 	for_primary_ifa(indev) {
@@ -66,7 +69,7 @@ __be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)
 		break;
 	} endfor_ifa(indev);
 
-	return laddr ? laddr : daddr;
+	return laddr ? laddr : daddr;//没有找到的话，就使用数据包的目的地址
 }
 EXPORT_SYMBOL_GPL(nf_tproxy_laddr4);
 
@@ -84,7 +87,7 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 	case IPPROTO_TCP: {
 		struct tcphdr _hdr, *hp;
 
-		hp = skb_header_pointer(skb, ip_hdrlen(skb),
+		hp = skb_header_pointer(skb, ip_hdrlen(skb),//得到TCP首部
 					sizeof(struct tcphdr), &_hdr);
 		if (hp == NULL)
 			return NULL;
@@ -96,7 +99,7 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 						      __tcp_hdrlen(hp),
 						    saddr, sport,
 						    daddr, dport,
-						    in->ifindex, 0);
+						    in->ifindex, 0);//查询处于listen状态的socket
 
 			if (sk && !refcount_inc_not_zero(&sk->sk_refcnt))
 				sk = NULL;
@@ -109,7 +112,14 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 		case NF_TPROXY_LOOKUP_ESTABLISHED:
 			sk = inet_lookup_established(net, &tcp_hashinfo,
 						    saddr, sport, daddr, dport,
-						    in->ifindex);
+						    in->ifindex);//查询处于established状态的socket
+			/*
+			对比listen状态，细心的读者应该会想到，为什么这里不增加引用计数。
+			这是因为inet_lookup_established内部会增加sock计数，而inet_lookup_listener不会。
+			相关commit可以查看：
+			1. 3b24d854cb35 tcp/dccp: do not touch listener sk_refcnt under synflood
+			2. dcbe35909c84 netfilter: tproxy: properly refcount tcp listeners
+			*/
 			break;
 		default:
 			BUG();
@@ -130,7 +140,7 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 			 */
 			if ((lookup_type == NF_TPROXY_LOOKUP_ESTABLISHED &&
 			      (!connected || wildcard)) ||
-			    (lookup_type == NF_TPROXY_LOOKUP_LISTENER && connected)) {
+			    (lookup_type == NF_TPROXY_LOOKUP_LISTENER && connected)) {//对状态进行检查
 				sock_put(sk);
 				sk = NULL;
 			}
