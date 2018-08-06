@@ -36,7 +36,7 @@ MODULE_ALIAS("ip_conntrack_ftp");
 MODULE_ALIAS_NFCT_HELPER("ftp");
 
 /* This is slow, but it's simple. --RR */
-static char *ftp_buffer;
+static char *ftp_buffer;//用于保存FTP的数据内容
 
 static DEFINE_SPINLOCK(nf_ftp_lock);
 
@@ -399,11 +399,11 @@ static int help(struct sk_buff *skb,
 		return NF_ACCEPT;
 	}
 
-	th = skb_header_pointer(skb, protoff, sizeof(_tcph), &_tcph);
+	th = skb_header_pointer(skb, protoff, sizeof(_tcph), &_tcph);//获得TCP header，注意这里是复制一份出来的。
 	if (th == NULL)
 		return NF_ACCEPT;
 
-	dataoff = protoff + th->doff * 4;
+	dataoff = protoff + th->doff * 4;//得到TCP的数据段偏移
 	/* No data? */
 	if (dataoff >= skb->len) {
 		pr_debug("ftp: dataoff(%u) >= skblen(%u)\n", dataoff,
@@ -413,7 +413,7 @@ static int help(struct sk_buff *skb,
 	datalen = skb->len - dataoff;
 
 	spin_lock_bh(&nf_ftp_lock);
-	fb_ptr = skb_header_pointer(skb, dataoff, datalen, ftp_buffer);
+	fb_ptr = skb_header_pointer(skb, dataoff, datalen, ftp_buffer);//得到TCP也就是FTP的数据段内容
 	BUG_ON(fb_ptr == NULL);
 
 	ends_in_nl = (fb_ptr[datalen - 1] == '\n');
@@ -583,11 +583,11 @@ static int __init nf_conntrack_ftp_init(void)
 		return -ENOMEM;
 
 	if (ports_c == 0)
-		ports[ports_c++] = FTP_PORT;
+		ports[ports_c++] = FTP_PORT;//没有指定端口，就使用默认的FTP端口
 
 	/* FIXME should be configurable whether IPv4 and IPv6 FTP connections
 		 are tracked or not - YK */
-	for (i = 0; i < ports_c; i++) {
+	for (i = 0; i < ports_c; i++) {//初始化FTP的helper，包括IPv4和IPv6。
 		nf_ct_helper_init(&ftp[2 * i], AF_INET, IPPROTO_TCP, "ftp",
 				  FTP_PORT, ports[i], ports[i], &ftp_exp_policy,
 				  0, help, nf_ct_ftp_from_nlattr, THIS_MODULE);
@@ -596,7 +596,7 @@ static int __init nf_conntrack_ftp_init(void)
 				  0, help, nf_ct_ftp_from_nlattr, THIS_MODULE);
 	}
 
-	ret = nf_conntrack_helpers_register(ftp, ports_c * 2);
+	ret = nf_conntrack_helpers_register(ftp, ports_c * 2);//注册ftp的helper
 	if (ret < 0) {
 		pr_err("failed to register helpers\n");
 		kfree(ftp_buffer);

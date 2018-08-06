@@ -3507,13 +3507,13 @@ static int __init ctnetlink_init(void)
 {
 	int ret;
 
-	ret = nfnetlink_subsys_register(&ctnl_subsys);
+	ret = nfnetlink_subsys_register(&ctnl_subsys);//注册conntrack的netlink接口
 	if (ret < 0) {
 		pr_err("ctnetlink_init: cannot register with nfnetlink.\n");
 		goto err_out;
 	}
 
-	ret = nfnetlink_subsys_register(&ctnl_exp_subsys);
+	ret = nfnetlink_subsys_register(&ctnl_exp_subsys);//注册expect的netlink接口
 	if (ret < 0) {
 		pr_err("ctnetlink_init: cannot register exp with nfnetlink.\n");
 		goto err_unreg_subsys;

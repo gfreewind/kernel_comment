@@ -1045,7 +1045,7 @@ out_bad:
 EXPORT_SYMBOL(__skb_flow_dissect);
 
 static u32 hashrnd __read_mostly;
-static __always_inline void __flow_hash_secret_init(void)
+static __always_inline void __flow_hash_secret_init(void)//生成随机值。开机后只会执行一次
 {
 	net_get_random_once(&hashrnd, sizeof(hashrnd));
 }

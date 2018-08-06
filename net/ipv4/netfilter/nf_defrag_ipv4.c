@@ -92,6 +92,7 @@ static unsigned int ipv4_conntrack_defrag(void *priv,
 	return NF_ACCEPT;
 }
 
+/* 在conntrack之前，进行defrag，保证后面的处理。如连接跟踪需要得到4层信息 */
 static const struct nf_hook_ops ipv4_defrag_ops[] = {
 	{
 		.hook		= ipv4_conntrack_defrag,

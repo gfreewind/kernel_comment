@@ -7221,16 +7221,19 @@ int dev_change_tx_queue_len(struct net_device *dev, unsigned long new_len)
 		dev->tx_queue_len = new_len;
 		res = call_netdevice_notifiers(NETDEV_CHANGE_TX_QUEUE_LEN, dev);
 		res = notifier_to_errno(res);
-		if (res) {
-			netdev_err(dev,
-				   "refused to change device tx_queue_len\n");
-			dev->tx_queue_len = orig_len;
-			return res;
-		}
-		return dev_qdisc_change_tx_queue_len(dev);
+		if (res)
+			goto err_rollback;
+		res = dev_qdisc_change_tx_queue_len(dev);
+		if (res)
+			goto err_rollback;
 	}
 
 	return 0;
+
+err_rollback:
+	netdev_err(dev, "refused to change device tx_queue_len\n");
+	dev->tx_queue_len = orig_len;
+	return res;
 }
 
 /**
@@ -8715,7 +8718,8 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 		/* We get here if we can't use the current device name */
 		if (!pat)
 			goto out;
-		if (dev_get_valid_name(net, dev, pat) < 0)
+		err = dev_get_valid_name(net, dev, pat);
+		if (err < 0)
 			goto out;
 	}
 
@@ -8727,7 +8731,6 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	dev_close(dev);
 
 	/* And unlink it from device chain */
-	err = -ENODEV;
 	unlist_netdevice(dev);
 
 	synchronize_net();
@@ -8895,7 +8898,7 @@ static struct hlist_head * __net_init netdev_create_hash(void)
 	int i;
 	struct hlist_head *hash;
 
-	hash = kmalloc(sizeof(*hash) * NETDEV_HASHENTRIES, GFP_KERNEL);
+	hash = kmalloc_array(NETDEV_HASHENTRIES, sizeof(*hash), GFP_KERNEL);
 	if (hash != NULL)
 		for (i = 0; i < NETDEV_HASHENTRIES; i++)
 			INIT_HLIST_HEAD(&hash[i]);

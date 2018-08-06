@@ -209,7 +209,7 @@ struct xt_target {
 
 	const char *table; // 用在哪个table上
 	unsigned int targetsize; // target规则的大小
-	unsigned int usersize;
+	unsigned int usersize;//应用层会访问的size大小
 #ifdef CONFIG_COMPAT
 	unsigned int compatsize;
 #endif
