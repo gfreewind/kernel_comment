@@ -8,6 +8,11 @@
  *
  */
 
+/*
+veth应该是最简单的虚拟网络设备。其作用就像一个双向管道，连接两端。
+一般用于连接两个容器
+*/
+
 #include <linux/netdevice.h>
 #include <linux/slab.h>
 #include <linux/ethtool.h>
@@ -89,6 +94,7 @@ static void veth_get_ethtool_stats(struct net_device *dev,
 	data[0] = peer ? peer->ifindex : 0;
 }
 
+/* veth支持的ethtool操作 */
 static const struct ethtool_ops veth_ethtool_ops = {
 	.get_drvinfo		= veth_get_drvinfo,
 	.get_link		= ethtool_op_get_link,
@@ -98,6 +104,7 @@ static const struct ethtool_ops veth_ethtool_ops = {
 	.get_link_ksettings	= veth_get_link_ksettings,
 };
 
+/* veth的发送函数 */
 static netdev_tx_t veth_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct veth_priv *priv = netdev_priv(dev);
@@ -106,20 +113,25 @@ static netdev_tx_t veth_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	rcu_read_lock();
 	rcv = rcu_dereference(priv->peer);
-	if (unlikely(!rcv)) {
+	if (unlikely(!rcv)) {//没有对端，直接释放
 		kfree_skb(skb);
 		goto drop;
 	}
 
-	if (likely(dev_forward_skb(rcv, skb) == NET_RX_SUCCESS)) {
+	if (likely(dev_forward_skb(rcv, skb) == NET_RX_SUCCESS)) {//将数据包转发给对端
 		struct pcpu_vstats *stats = this_cpu_ptr(dev->vstats);
-
+		/* 成功转发，更新计数 */
 		u64_stats_update_begin(&stats->syncp);
 		stats->bytes += length;
 		stats->packets++;
 		u64_stats_update_end(&stats->syncp);
 	} else {
 drop:
+		/*
+		转发失败，增加丢包计数。
+		细心的人，应该注意到，丢包计数使用的是原子变量，而成功的计数不是。
+		这是因为丢包是不常发生的行为。
+		*/
 		atomic64_inc(&priv->dropped);
 	}
 	rcu_read_unlock();
@@ -187,7 +199,7 @@ static int veth_open(struct net_device *dev)
 	if (!peer)
 		return -ENOTCONN;
 
-	if (peer->flags & IFF_UP) {
+	if (peer->flags & IFF_UP) {//启用veth，则使能carrier
 		netif_carrier_on(dev);
 		netif_carrier_on(peer);
 	}
@@ -300,15 +312,15 @@ static const struct net_device_ops veth_netdev_ops = {
 
 static void veth_setup(struct net_device *dev)
 {
-	ether_setup(dev);
+	ether_setup(dev);//ethernet类型网卡的通用初始化
 
 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 	dev->priv_flags |= IFF_NO_QUEUE;
 	dev->priv_flags |= IFF_PHONY_HEADROOM;
 
-	dev->netdev_ops = &veth_netdev_ops;
-	dev->ethtool_ops = &veth_ethtool_ops;
+	dev->netdev_ops = &veth_netdev_ops;//用于网络设备驱动框架
+	dev->ethtool_ops = &veth_ethtool_ops;//用于ethtool
 	dev->features |= NETIF_F_LLTX;
 	dev->features |= VETH_FEATURES;
 	dev->vlan_features = dev->features &
@@ -316,8 +328,8 @@ static void veth_setup(struct net_device *dev)
 			       NETIF_F_HW_VLAN_STAG_TX |
 			       NETIF_F_HW_VLAN_CTAG_RX |
 			       NETIF_F_HW_VLAN_STAG_RX);
-	dev->needs_free_netdev = true;
-	dev->priv_destructor = veth_dev_free;
+	dev->needs_free_netdev = true;//需要在netdev_run_todo中直接释放
+	dev->priv_destructor = veth_dev_free;//私有的“析构”函数
 	dev->max_mtu = ETH_MAX_MTU;
 
 	dev->hw_features = VETH_FEATURES;
@@ -385,6 +397,7 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 		tbp = tb;
 	}
 
+	/* 得到dev的名字，如果用户指定，就用用户的，没有指定，就按照规则生成一个 */
 	if (ifmp && tbp[IFLA_IFNAME]) {
 		nla_strlcpy(ifname, tbp[IFLA_IFNAME], IFNAMSIZ);
 		name_assign_type = NET_NAME_USER;
@@ -393,19 +406,19 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 		name_assign_type = NET_NAME_ENUM;
 	}
 
-	net = rtnl_link_get_net(src_net, tbp);
+	net = rtnl_link_get_net(src_net, tbp);//得到namespace
 	if (IS_ERR(net))
 		return PTR_ERR(net);
 
 	peer = rtnl_create_link(net, ifname, name_assign_type,
-				&veth_link_ops, tbp);
+				&veth_link_ops, tbp);//创建对端的veth设备
 	if (IS_ERR(peer)) {
 		put_net(net);
 		return PTR_ERR(peer);
 	}
 
 	if (!ifmp || !tbp[IFLA_ADDRESS])
-		eth_hw_addr_random(peer);
+		eth_hw_addr_random(peer);//用户没有指定peer地址，生成随机MAC
 
 	if (ifmp && (dev->ifindex != 0))
 		peer->ifindex = ifmp->ifi_index;
@@ -413,7 +426,7 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 	peer->gso_max_size = dev->gso_max_size;
 	peer->gso_max_segs = dev->gso_max_segs;
 
-	err = register_netdevice(peer);
+	err = register_netdevice(peer);//注册peer veth
 	put_net(net);
 	net = NULL;
 	if (err < 0)
@@ -433,8 +446,9 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 	 */
 
 	if (tb[IFLA_ADDRESS] == NULL)
-		eth_hw_addr_random(dev);
+		eth_hw_addr_random(dev);//没有指定本端veth的mac，随机生成一个
 
+	//设置本端veth的设备名
 	if (tb[IFLA_IFNAME])
 		nla_strlcpy(dev->name, tb[IFLA_IFNAME], IFNAMSIZ);
 	else
@@ -444,12 +458,12 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 	if (err < 0)
 		goto err_register_dev;
 
-	netif_carrier_off(dev);
+	netif_carrier_off(dev);//默认先off
 
 	/*
 	 * tie the deviced together
 	 */
-
+	/* 将两个veth连接在一起 */
 	priv = netdev_priv(dev);
 	rcu_assign_pointer(priv->peer, peer);
 
@@ -505,10 +519,10 @@ static struct net *veth_get_link_net(const struct net_device *dev)
 static struct rtnl_link_ops veth_link_ops = {
 	.kind		= DRV_NAME,
 	.priv_size	= sizeof(struct veth_priv),
-	.setup		= veth_setup,
-	.validate	= veth_validate,
-	.newlink	= veth_newlink,
-	.dellink	= veth_dellink,
+	.setup		= veth_setup,//创建netdev时，先调用setup，做初始化
+	.validate	= veth_validate,//用于在创建veth时，验证参数
+	.newlink	= veth_newlink,//创建veth dev
+	.dellink	= veth_dellink,//删除veth dev
 	.policy		= veth_policy,
 	.maxtype	= VETH_INFO_MAX,
 	.get_link_net	= veth_get_link_net,
@@ -520,7 +534,7 @@ static struct rtnl_link_ops veth_link_ops = {
 
 static __init int veth_init(void)
 {
-	return rtnl_link_register(&veth_link_ops);
+	return rtnl_link_register(&veth_link_ops);//注册veth的netlink操作
 }
 
 static __exit void veth_exit(void)
