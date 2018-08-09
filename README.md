@@ -54,5 +54,6 @@ Date:   Fri May 11 08:47:16 2018 +0800
 
 ## 项目活跃成员  
 
-net：高峰(gfree.wind at gmail.com)
+net：高峰(gfree.wind at gmail.com)  
+driver: 高峰(gfree.wind at gmail.com)
 
